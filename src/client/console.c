@@ -14,6 +14,7 @@
  */
 
 #include "../common/qcommon.h"
+#include "../renderer/tr_types.h"
 #include <string.h>
 #include <ctype.h>
 
@@ -258,11 +259,64 @@ void Con_DrawConsole(void) {
 
     if (con.displayFrac <= 0.001f) return;
 
-    /* TODO: Actual GL rendering of console background, text, and input line.
-     * This requires the 2D drawing system (R_DrawStretchPic, font rendering).
-     * For now, the console functionality works -- text goes to stdout via
-     * Com_Printf, commands execute, bindings work. The visual overlay will
-     * come when the 2D rendering pipeline is implemented. */
+    /* GL 2D drawing functions from r_gl.c */
+    extern void R_Set2D(void);
+    extern void R_DrawFillRect(float x, float y, float w, float h,
+                               float r, float g, float b, float a);
+    extern void R_DrawString(float x, float y, const char *str,
+                             float scale, float r, float g, float b, float a);
+    extern void R_GetGlconfig(glconfig_t *config);
+
+    glconfig_t gc;
+    R_GetGlconfig(&gc);
+    float screenW = (float)gc.vidWidth;
+    float screenH = (float)gc.vidHeight;
+
+    R_Set2D();
+
+    /* Console background */
+    float consoleH = screenH * con.displayFrac;
+    R_DrawFillRect(0, 0, screenW, consoleH, 0.0f, 0.0f, 0.0f, 0.8f);
+
+    /* Version bar at bottom of console */
+    R_DrawFillRect(0, consoleH - 2.0f, screenW, 2.0f, 0.7f, 0.4f, 0.0f, 1.0f);
+
+    /* Text rendering */
+    float charH = 14.0f;
+    float charW = 8.0f;
+    float padX = 4.0f;
+
+    /* Draw input line at bottom */
+    float inputY = consoleH - charH - 4.0f;
+    R_DrawString(padX, inputY, "]", 1.0f, 0.7f, 0.7f, 0.7f, 1.0f);
+    if (con.inputLen > 0) {
+        R_DrawString(padX + charW, inputY, con.input, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f);
+    }
+
+    /* Blinking cursor */
+    int cursorBlink = (Sys_Milliseconds() / 500) & 1;
+    if (cursorBlink) {
+        float cx = padX + charW * (1 + con.inputCursor);
+        R_DrawFillRect(cx, inputY + 2.0f, charW, charH - 4.0f, 1.0f, 1.0f, 1.0f, 0.7f);
+    }
+
+    /* Draw text lines (bottom-up from input line) */
+    int maxVisLines = (int)((inputY - 4.0f) / charH);
+    int startLine = con.displayLine;
+
+    for (int i = 0; i < maxVisLines; i++) {
+        int lineIdx = startLine - i;
+        if (lineIdx < 0) break;
+        if (lineIdx < con.lineCount - CON_MAX_LINES) break;
+
+        const char *line = con.lines[lineIdx % CON_MAX_LINES];
+        if (!line[0]) continue;
+
+        float y = inputY - charH * (i + 1);
+        if (y < 0) break;
+
+        R_DrawString(padX, y, line, 1.0f, 0.8f, 0.8f, 0.8f, 1.0f);
+    }
 }
 
 /* =========================================================================
