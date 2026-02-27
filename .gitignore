@@ -1,0 +1,47 @@
+# Build artifacts
+build/
+cmake-build-*/
+*.o
+*.obj
+*.lib
+*.a
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# IDE files
+.vs/
+.vscode/
+*.suo
+*.user
+*.sln.docstates
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Game assets (supply your own copy)
+_iso/
+_extracted/
+_ref/
+*.zip
+*.bin
+*.cue
+*.iso
+*.pk3
+*.pak
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Dependencies
+vcpkg_installed/
