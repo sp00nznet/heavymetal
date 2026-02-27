@@ -76,6 +76,22 @@ byte    *S_SoundAmplitudes(const char *name, int *number_of_amplitudes);
 void    S_UpdateListener(const vec3_t origin, const vec3_t forward,
                          const vec3_t right, const vec3_t up);
 
+/* =========================================================================
+ * SDL2 backend (snd_sdl.c)
+ * ========================================================================= */
+
+qboolean        SND_Init(void);
+void            SND_Shutdown(void);
+sfxHandle_t     SND_RegisterSound(const char *name);
+void            SND_StartSound(const vec3_t origin, int entityNum, int channel,
+                               sfxHandle_t sfx, float volume, float minDist, float pitch);
+void            SND_StopSound(int entityNum, int channel);
+void            SND_UpdateListener(const vec3_t origin, const vec3_t forward,
+                                   const vec3_t right, const vec3_t up);
+float           SND_SoundLength(sfxHandle_t sfx);
+void            SND_SetVolume(float master, float music);
+void            SND_StopAllSounds(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -47,13 +47,36 @@ static void R_InitGL(void) {
     Com_Printf("Renderer: OpenGL initialized\n");
 }
 
+/* Forward declarations from renderer subsystems */
+extern void R_InitShaders(void);
+extern void R_ShutdownShaders(void);
+extern void R_InitModels(void);
+extern void R_ShutdownModels(void);
+extern void R_InitSurfaces(void);
+extern void R_ShutdownSurfaces(void);
+extern void R_InitLighting(void);
+extern void R_ShutdownLighting(void);
+extern void R_InitSky(void);
+extern void R_ShutdownSky(void);
+
 void R_Init(void) {
     Com_Printf("--- R_Init ---\n");
     R_InitGL();
+    R_InitShaders();
+    R_InitModels();
+    R_InitSurfaces();
+    R_InitLighting();
+    R_InitSky();
 }
 
 void R_Shutdown(void) {
-    Com_Printf("Renderer shutdown\n");
+    Com_Printf("--- R_Shutdown ---\n");
+    R_ShutdownSky();
+    R_ShutdownLighting();
+    R_ShutdownSurfaces();
+    R_ShutdownModels();
+    R_ShutdownShaders();
+    GLimp_Shutdown();
 }
 
 /* =========================================================================
@@ -136,25 +159,19 @@ void R_EndRegistration(void) {
     Com_DPrintf("R_EndRegistration\n");
 }
 
-qhandle_t R_RegisterModel(const char *name) {
-    Com_DPrintf("R_RegisterModel: %s (stub)\n", name);
-    /* TODO: Load model and return handle */
-    return 0;
-}
+/* R_RegisterModel is now in r_model.c */
+/* R_RegisterSkin is now in r_model.c */
+
+/* Shader registration wrappers -- delegates to r_shader.c */
+extern qhandle_t R_FindShader(const char *name);
 
 qhandle_t R_RegisterShader(const char *name) {
-    Com_DPrintf("R_RegisterShader: %s (stub)\n", name);
-    return 0;
+    return R_FindShader(name);
 }
 
 qhandle_t R_RegisterShaderNoMip(const char *name) {
-    Com_DPrintf("R_RegisterShaderNoMip: %s (stub)\n", name);
-    return 0;
-}
-
-qhandle_t R_RegisterSkin(const char *name) {
-    Com_DPrintf("R_RegisterSkin: %s (stub)\n", name);
-    return 0;
+    /* NoMip shaders skip mipmap generation (used for 2D UI elements) */
+    return R_FindShader(name);
 }
 
 void R_LoadWorldMap(const char *mapname) {
@@ -162,16 +179,7 @@ void R_LoadWorldMap(const char *mapname) {
     R_LoadBSP(mapname);
 }
 
-void R_ModelBounds(clipHandle_t model, vec3_t mins, vec3_t maxs) {
-    (void)model;
-    VectorSet(mins, -16, -16, 0);
-    VectorSet(maxs, 16, 16, 72);
-}
-
-float R_ModelRadius(clipHandle_t model) {
-    (void)model;
-    return 36.0f;
-}
+/* R_ModelBounds and R_ModelRadius are now in r_model.c */
 
 /* =========================================================================
  * 2D drawing (HUD, menus)

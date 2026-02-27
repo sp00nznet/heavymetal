@@ -324,6 +324,10 @@ void SV_Frame(int msec) {
 
         /* Run game logic frame */
         ge->RunFrame(sv.time, sv.frameTime);
+
+        /* Run Morpheus script threads */
+        extern void Script_RunThreads(float currentTime);
+        Script_RunThreads((float)sv.time / 1000.0f);
     }
 
     /* Prepare frame for snapshot building */
