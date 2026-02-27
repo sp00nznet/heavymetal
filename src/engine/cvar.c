@@ -105,3 +105,8 @@ char *Cvar_VariableString(const char *name) {
     cvar_t *var = Cvar_Find(name);
     return var ? var->string : "";
 }
+
+/* Accessor for tab completion (console.c) */
+cvar_t *Cvar_GetVars(void) {
+    return cvar_vars;
+}

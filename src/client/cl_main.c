@@ -189,6 +189,23 @@ static void CL_Disconnect_f(void) {
     cls.state = CA_DISCONNECTED;
 }
 
+/*
+ * CL_ForceDisconnect -- called by Com_Error (ERR_DROP / ERR_DISCONNECT)
+ * to reset client state without going through normal disconnect flow.
+ * Must be safe to call even when client is in a partially broken state.
+ */
+void CL_ForceDisconnect(void) {
+    if (cls.cgameStarted) {
+        CL_ShutdownCGame();
+        cls.cgameStarted = qfalse;
+    }
+
+    cls.viewangles[0] = cls.viewangles[1] = cls.viewangles[2] = 0.0f;
+    cls.serverTime = 0;
+    cls.mapname[0] = '\0';
+    cls.state = CA_DISCONNECTED;
+}
+
 static void CL_Quit_f(void) {
     Com_Shutdown();
     Sys_Quit();

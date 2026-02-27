@@ -169,6 +169,19 @@ void Cmd_TokenizeString(const char *text) {
     }
 }
 
+/* Accessors for tab completion (console.c) */
+cmd_function_t *Cmd_GetFunctions(void) {
+    return cmd_functions;
+}
+
+const char *Cmd_FunctionName(const cmd_function_t *cmd) {
+    return cmd ? cmd->name : "";
+}
+
+const cmd_function_t *Cmd_FunctionNext(const cmd_function_t *cmd) {
+    return cmd ? cmd->next : NULL;
+}
+
 void Cmd_ExecuteString(const char *text) {
     Cmd_TokenizeString(text);
     if (!cmd_argc) return;

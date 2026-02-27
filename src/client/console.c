@@ -90,17 +90,113 @@ void Con_Print(const char *text) {
  * Tab completion
  * ========================================================================= */
 
+/* =========================================================================
+ * Tab completion -- match commands and cvars against partial input
+ *
+ * Walk both the command linked list and cvar linked list to find
+ * all names matching the current input prefix. If there's exactly
+ * one match, complete it. If there are multiple, complete to the
+ * longest common prefix and print the candidates.
+ * ========================================================================= */
+
+/* cmd.c exposes its list head via this accessor */
+typedef struct cmd_function_s cmd_function_t;
+extern cmd_function_t *Cmd_GetFunctions(void);
+extern const char *Cmd_FunctionName(const cmd_function_t *cmd);
+extern const cmd_function_t *Cmd_FunctionNext(const cmd_function_t *cmd);
+
+/* cvar.c exposes its list head */
+extern cvar_t *Cvar_GetVars(void);
+
 static void Con_TabComplete(void) {
     if (con.inputLen == 0) return;
 
-    /* Find all matching commands and cvars */
+    /* Extract the partial token (first word only) */
     char partial[CON_MAX_INPUT];
     Q_strncpyz(partial, con.input, sizeof(partial));
 
-    /* TODO: Full tab completion with command list and cvar list matching.
-     * For now, just print a hint. */
+    /* Trim to first word */
+    for (int i = 0; partial[i]; i++) {
+        if (partial[i] == ' ') {
+            partial[i] = '\0';
+            break;
+        }
+    }
+
+    int partialLen = (int)strlen(partial);
+    if (partialLen == 0) return;
+
+    /* Collect matches */
+    #define MAX_COMPLETE_MATCHES 256
+    const char *matches[MAX_COMPLETE_MATCHES];
+    int numMatches = 0;
+
+    /* Search commands */
+    for (const cmd_function_t *cmd = Cmd_GetFunctions(); cmd; cmd = Cmd_FunctionNext(cmd)) {
+        const char *name = Cmd_FunctionName(cmd);
+        if (!Q_stricmpn(name, partial, partialLen)) {
+            if (numMatches < MAX_COMPLETE_MATCHES)
+                matches[numMatches++] = name;
+        }
+    }
+
+    /* Search cvars */
+    for (cvar_t *var = Cvar_GetVars(); var; var = var->next) {
+        if (!Q_stricmpn(var->name, partial, partialLen)) {
+            if (numMatches < MAX_COMPLETE_MATCHES)
+                matches[numMatches++] = var->name;
+        }
+    }
+
+    if (numMatches == 0) {
+        Com_Printf("No match for \"%s\"\n", partial);
+        return;
+    }
+
+    if (numMatches == 1) {
+        /* Single match -- complete it */
+        Q_strncpyz(con.input, matches[0], CON_MAX_INPUT);
+        con.inputLen = (int)strlen(con.input);
+        /* Append a space for convenience */
+        if (con.inputLen < CON_MAX_INPUT - 1) {
+            con.input[con.inputLen++] = ' ';
+            con.input[con.inputLen] = '\0';
+        }
+        con.inputCursor = con.inputLen;
+        return;
+    }
+
+    /* Multiple matches -- find longest common prefix */
+    int commonLen = (int)strlen(matches[0]);
+    for (int i = 1; i < numMatches; i++) {
+        int j = 0;
+        while (j < commonLen) {
+            char a = matches[0][j];
+            char b = matches[i][j];
+            /* Case-insensitive comparison */
+            if (a >= 'A' && a <= 'Z') a += 32;
+            if (b >= 'A' && b <= 'Z') b += 32;
+            if (a != b) break;
+            j++;
+        }
+        commonLen = j;
+    }
+
+    /* Complete to common prefix if it's longer than what we have */
+    if (commonLen > partialLen) {
+        memcpy(con.input, matches[0], commonLen);
+        con.input[commonLen] = '\0';
+        con.inputLen = commonLen;
+        con.inputCursor = commonLen;
+    }
+
+    /* Print all matches */
     Com_Printf("] %s\n", partial);
-    Com_Printf("Tab completion not yet fully implemented\n");
+    for (int i = 0; i < numMatches; i++) {
+        Com_Printf("  %s\n", matches[i]);
+    }
+
+    #undef MAX_COMPLETE_MATCHES
 }
 
 /* =========================================================================

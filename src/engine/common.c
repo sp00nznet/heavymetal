@@ -25,6 +25,19 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <setjmp.h>
+
+/* =========================================================================
+ * Error recovery
+ *
+ * ERR_DROP uses longjmp to abort the current operation and return to
+ * the main loop. This matches Q3/FAKK2 behavior: drop errors kill
+ * the current game/map but don't exit the process.
+ * ========================================================================= */
+
+static jmp_buf  com_errorJmpBuf;
+static qboolean com_errorEntered = qfalse;
+static char     com_errorMessage[4096];
 
 /* =========================================================================
  * Cvars registered by the engine
@@ -73,19 +86,54 @@ void Com_Error(int code, const char *fmt, ...) {
     va_list args;
     char    msg[4096];
 
+    /* Prevent recursive errors */
+    if (com_errorEntered) {
+        Sys_Error("Com_Error: recursive error after: %s", com_errorMessage);
+    }
+    com_errorEntered = qtrue;
+
     va_start(args, fmt);
     vsnprintf(msg, sizeof(msg), fmt, args);
     va_end(args);
 
-    Com_Printf("***** ERROR *****\n%s\n", msg);
+    Q_strncpyz(com_errorMessage, msg, sizeof(com_errorMessage));
 
     if (code == ERR_FATAL) {
+        Com_Printf("***** FATAL ERROR *****\n%s\n", msg);
         Com_Shutdown();
         Sys_Error("%s", msg);
     }
 
-    /* TODO: ERR_DROP -- disconnect and return to menu */
-    /* TODO: ERR_DISCONNECT -- just disconnect */
+    if (code == ERR_DROP) {
+        Com_Printf("***** ERROR *****\n%s\n", msg);
+
+        /* Disconnect from server and drop to console */
+        extern void CL_Disconnect_f(void);
+        SV_Shutdown(msg);
+
+        /* Force client to disconnected state */
+        extern void CL_ForceDisconnect(void);
+        CL_ForceDisconnect();
+
+        com_errorEntered = qfalse;
+        longjmp(com_errorJmpBuf, 1);
+    }
+
+    if (code == ERR_DISCONNECT) {
+        Com_Printf("***** DISCONNECT *****\n%s\n", msg);
+
+        /* Disconnect client only -- don't kill server */
+        extern void CL_ForceDisconnect(void);
+        CL_ForceDisconnect();
+
+        com_errorEntered = qfalse;
+        longjmp(com_errorJmpBuf, 2);
+    }
+
+    /* Unknown error code -- treat as fatal */
+    Com_Printf("***** ERROR (code %d) *****\n%s\n", code, msg);
+    Com_Shutdown();
+    Sys_Error("%s", msg);
 }
 
 /* =========================================================================
@@ -155,6 +203,17 @@ void Com_Init(int argc, char **argv) {
 void Com_Frame(void) {
     int msec;
     static int lastTime = 0;
+
+    /* Set up error recovery point for ERR_DROP / ERR_DISCONNECT.
+     * If an error occurs during the frame, we longjmp back here,
+     * skip the rest of the frame, and continue with the next one. */
+    if (setjmp(com_errorJmpBuf)) {
+        /* We got here from a longjmp in Com_Error.
+         * The error has already been printed and handled.
+         * Just continue to the next frame. */
+        lastTime = Sys_Milliseconds();
+        return;
+    }
 
     /* Frame rate limiting */
     if (com_maxfps && com_maxfps->integer > 0) {

@@ -14,9 +14,13 @@
 
 #include "ghost.h"
 #include "../common/qcommon.h"
+#include "../renderer/tr_types.h"
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
+
+/* Forward declaration */
+static void Ghost_RenderParticles(void);
 
 /* =========================================================================
  * State
@@ -269,8 +273,79 @@ void Ghost_Frame(int msec) {
         Ghost_UpdateParticle(&ghost_particles[i], dt);
     }
 
-    /* TODO: Submit live particles to renderer via R_AddRefSpriteToScene
-     * or through a custom particle batch rendering path */
+    /* Submit live particles to renderer */
+    Ghost_RenderParticles();
+}
+
+/* =========================================================================
+ * Particle rendering -- submit sprites to the scene
+ *
+ * Each active particle becomes a refEntity_t submitted via
+ * R_AddRefSpriteToScene. The renderer draws them as camera-facing
+ * quads (sprites) or oriented quads depending on renderMode.
+ * ========================================================================= */
+
+extern void R_AddRefSpriteToScene(refEntity_t *ent);
+
+static void Ghost_RenderParticles(void) {
+    for (int i = 0; i < GHOST_MAX_PARTICLES; i++) {
+        ghostParticle_t *p = &ghost_particles[i];
+        if (!p->active) continue;
+
+        refEntity_t ent;
+        memset(&ent, 0, sizeof(ent));
+
+        /* Position */
+        VectorCopy(p->origin, ent.origin);
+
+        /* Scale from particle size */
+        ent.scale = p->size;
+        if (ent.scale <= 0.0f) ent.scale = 1.0f;
+
+        /* Color and alpha */
+        ent.shaderRGBA[0] = (byte)(p->color[0] * 255.0f);
+        ent.shaderRGBA[1] = (byte)(p->color[1] * 255.0f);
+        ent.shaderRGBA[2] = (byte)(p->color[2] * 255.0f);
+        ent.shaderRGBA[3] = (byte)(p->color[3] * 255.0f);
+
+        /* Skip fully transparent particles */
+        if (ent.shaderRGBA[3] == 0) continue;
+
+        /* Custom shader from effect definition */
+        ent.customShader = p->shaderHandle;
+
+        /* Rotation stored in shaderTexCoord[0] for the sprite renderer */
+        ent.shaderTexCoord[0] = p->rotation;
+
+        /* Identity axis (sprites are billboarded by the renderer) */
+        ent.axis[0][0] = 1.0f;
+        ent.axis[1][1] = 1.0f;
+        ent.axis[2][2] = 1.0f;
+
+        /* Render flags based on particle mode */
+        if (p->renderMode == GHOST_RENDER_ORIENTED) {
+            /* Oriented particles use velocity as forward axis */
+            float vlen = VectorLength(p->velocity);
+            if (vlen > 0.001f) {
+                VectorScale(p->velocity, 1.0f / vlen, ent.axis[0]);
+            }
+        }
+
+        /* Additive blending flag */
+        int emIdx = p->emitterIndex;
+        if (emIdx >= 0 && emIdx < GHOST_MAX_EMITTERS_ACTIVE &&
+            ghost_emitters[emIdx].active) {
+            int effIdx = ghost_emitters[emIdx].effectIndex;
+            int defIdx = ghost_emitters[emIdx].emitterDefIdx;
+            if (effIdx >= 0 && effIdx < ghost_numEffects) {
+                if (ghost_effects[effIdx].emitters[defIdx].additive) {
+                    ent.renderfx |= RF_ADDITIVE_DLIGHT;
+                }
+            }
+        }
+
+        R_AddRefSpriteToScene(&ent);
+    }
 }
 
 /* =========================================================================
