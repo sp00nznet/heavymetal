@@ -207,6 +207,16 @@ void    SV_Frame(int msec);
 /* TIKI model system */
 void    TIKI_Init(void);
 void    TIKI_Shutdown(void);
+void    TIKI_FlushAll(void);
+
+/* Renderer / BSP */
+void    R_Init(void);
+void    R_Shutdown(void);
+qboolean R_LoadBSP(const char *name);
+void    R_FreeWorld(void);
+const char *R_GetEntityString(void);
+int     R_GetNumInlineModels(void);
+qboolean R_WorldLoaded(void);
 
 /* Morpheus scripting */
 void    Script_Init(void);

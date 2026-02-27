@@ -61,8 +61,11 @@ set(COMMON_SOURCES
     src/common/q_math.h
     src/common/q_math.c
     src/common/qcommon.h
+    src/common/qfiles.h
     src/common/str.h
     src/common/str.cpp
+    src/common/pk3.h
+    src/common/pk3.c
 )
 
 # -----------------------------------------------------------------------------
