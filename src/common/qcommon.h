@@ -39,11 +39,26 @@ void    MSG_WriteShort(msg_t *sb, int c);
 void    MSG_WriteLong(msg_t *sb, int c);
 void    MSG_WriteFloat(msg_t *sb, float f);
 void    MSG_WriteString(msg_t *sb, const char *s);
+void    MSG_WriteAngle(msg_t *sb, float f);
+void    MSG_WriteAngle16(msg_t *sb, float f);
+void    MSG_WriteCoord(msg_t *sb, float f);
+void    MSG_WriteDir(msg_t *sb, const vec3_t dir);
+void    MSG_WriteData(msg_t *sb, const void *data, int length);
 int     MSG_ReadByte(msg_t *msg);
 int     MSG_ReadShort(msg_t *msg);
 int     MSG_ReadLong(msg_t *msg);
 float   MSG_ReadFloat(msg_t *msg);
 char    *MSG_ReadString(msg_t *msg);
+char    *MSG_ReadStringLine(msg_t *msg);
+float   MSG_ReadAngle(msg_t *msg);
+float   MSG_ReadAngle16(msg_t *msg);
+float   MSG_ReadCoord(msg_t *msg);
+void    MSG_ReadDir(msg_t *msg, vec3_t dir);
+void    MSG_ReadData(msg_t *msg, void *data, int length);
+void    MSG_WriteDeltaEntity(msg_t *msg, entityState_t *from, entityState_t *to, qboolean force);
+void    MSG_ReadDeltaEntity(msg_t *msg, entityState_t *from, entityState_t *to, int number);
+void    MSG_WriteDeltaPlayerstate(msg_t *msg, playerState_t *from, playerState_t *to);
+void    MSG_ReadDeltaPlayerstate(msg_t *msg, playerState_t *from, playerState_t *to);
 
 /* =========================================================================
  * Command buffer
@@ -203,6 +218,11 @@ void    CL_Frame(int msec);
 void    SV_Init(void);
 void    SV_Shutdown(const char *finalmsg);
 void    SV_Frame(int msec);
+void    SV_SpawnServer(const char *mapname);
+void    SV_Map_f(void);
+void    SV_KillServer_f(void);
+int     SV_GetServerTime(void);
+qboolean SV_IsRunning(void);
 
 /* TIKI model system */
 void    TIKI_Init(void);
@@ -216,6 +236,11 @@ void    CM_Shutdown(void);
 /* Renderer / BSP */
 void    R_Init(void);
 void    R_Shutdown(void);
+void    R_BeginFrame(void);
+void    R_EndFrame(void);
+void    R_BeginRegistration(void);
+void    R_EndRegistration(void);
+void    R_LoadWorldMap(const char *mapname);
 qboolean R_LoadBSP(const char *name);
 void    R_FreeWorld(void);
 const char *R_GetEntityString(void);

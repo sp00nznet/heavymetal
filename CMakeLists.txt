@@ -78,6 +78,7 @@ set(ENGINE_SOURCES
     src/engine/common.c
     src/engine/cvar.c
     src/engine/cmd.c
+    src/engine/msg.c
     src/engine/files.c
     src/engine/net.c
     src/engine/sys_sdl.c

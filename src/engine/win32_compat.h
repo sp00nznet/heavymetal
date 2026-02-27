@@ -125,6 +125,11 @@ void        IN_Shutdown(void);
 void        IN_Frame(void);
 void        IN_Activate(qboolean active);
 
+/* Input callbacks -- set by client to receive events from Win_ProcessEvents */
+void        IN_SetKeyCallback(void (*callback)(int key, qboolean down, unsigned int time));
+void        IN_SetCharCallback(void (*callback)(int ch));
+void        IN_SetMouseMoveCallback(void (*callback)(int dx, int dy));
+
 /* =========================================================================
  * Timing (replaces WINMM.DLL timers + KERNEL32 timing)
  *

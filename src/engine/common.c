@@ -49,8 +49,9 @@ void Com_Printf(const char *fmt, ...) {
 
     Sys_Print(msg);
 
-    /* TODO: Log to console buffer for in-game console */
-    /* TODO: Log to file if logfile cvar is set */
+    /* Feed console output buffer */
+    extern void Con_Print(const char *text);
+    Con_Print(msg);
 }
 
 void Com_DPrintf(const char *fmt, ...) {
@@ -122,6 +123,15 @@ void Com_Init(int argc, char **argv) {
     /* Network */
     NET_Init();
 
+    /* Collision model */
+    CM_Init();
+
+    /* Alias system */
+    Alias_Init();
+
+    /* Sound system */
+    S_Init();
+
     /* UberTools subsystems */
     TIKI_Init();        /* TIKI model system */
     Script_Init();      /* Morpheus scripting engine */
@@ -143,15 +153,33 @@ void Com_Frame(void) {
     int msec;
     static int lastTime = 0;
 
+    /* Frame rate limiting */
+    if (com_maxfps && com_maxfps->integer > 0) {
+        int minMsec = 1000 / com_maxfps->integer;
+        int elapsed;
+        do {
+            elapsed = Sys_Milliseconds() - lastTime;
+        } while (elapsed < minMsec);
+    }
+
     /* Get frame time */
     int timeNow = Sys_Milliseconds();
     msec = timeNow - lastTime;
     lastTime = timeNow;
 
     if (msec < 1) msec = 1;
+    if (msec > 500) msec = 500;  /* prevent spiral of death */
 
-    /* Process events */
-    Com_EventLoop();
+    /* Fixed time for debugging */
+    if (com_fixedtime && com_fixedtime->integer) {
+        msec = com_fixedtime->integer;
+    }
+
+    /* Timescale */
+    if (timescale && timescale->value != 1.0f) {
+        msec = (int)(msec * timescale->value);
+        if (msec < 1) msec = 1;
+    }
 
     /* Execute any pending commands */
     Cbuf_Execute();
@@ -176,6 +204,10 @@ void Com_Shutdown(void) {
     Ghost_Shutdown();
     Script_Shutdown();
     TIKI_Shutdown();
+
+    S_Shutdown();
+    Alias_Shutdown();
+    CM_Shutdown();
 
     NET_Shutdown();
     FS_Shutdown();
@@ -214,8 +246,12 @@ void Hunk_Clear(void) {
     /* TODO: Implement hunk allocator */
 }
 
-/* Event loop -- stub */
+/* Event loop */
 int Com_EventLoop(void) {
-    /* TODO: Process system events, input, etc. */
+    /* In the original engine, this pumps the system event queue
+     * (keyboard, mouse, network packets) and dispatches them.
+     * In the recomp, SDL2 event processing is done in Win_ProcessEvents()
+     * which is called from CL_Frame(). This function remains for
+     * compatibility with code that calls it directly. */
     return 0;
 }

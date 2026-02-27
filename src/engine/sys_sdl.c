@@ -238,17 +238,38 @@ void Sys_SetClipboardData(const char *data) {
  *   midiIn* (WINMM.DLL) for MIDI input (used for custom controllers)
  * ========================================================================= */
 
+/* Key event callback -- set by the key binding system */
+static void (*key_event_callback)(int key, qboolean down, unsigned int time) = NULL;
+static void (*char_event_callback)(int ch) = NULL;
+static void (*mouse_move_callback)(int dx, int dy) = NULL;
+
+void IN_SetKeyCallback(void (*callback)(int key, qboolean down, unsigned int time)) {
+    key_event_callback = callback;
+}
+
+void IN_SetCharCallback(void (*callback)(int ch)) {
+    char_event_callback = callback;
+}
+
+void IN_SetMouseMoveCallback(void (*callback)(int dx, int dy)) {
+    mouse_move_callback = callback;
+}
+
 void IN_Init(void) {
     Com_Printf("Input: SDL2 input initialized\n");
-    /* TODO: SDL2 relative mouse, keyboard state */
+#ifdef USE_SDL2
+    SDL_SetRelativeMouseMode(SDL_TRUE);
+#endif
 }
 
 void IN_Shutdown(void) {
-    /* Nothing to clean up with SDL2 input */
+#ifdef USE_SDL2
+    SDL_SetRelativeMouseMode(SDL_FALSE);
+#endif
 }
 
 void IN_Frame(void) {
-    /* TODO: Process SDL2 input events and feed to engine */
+    /* Input events are processed in Win_ProcessEvents */
 }
 
 void IN_Activate(qboolean active) {
@@ -256,6 +277,204 @@ void IN_Activate(qboolean active) {
     SDL_SetRelativeMouseMode(active ? SDL_TRUE : SDL_FALSE);
 #endif
     (void)active;
+}
+
+/* =========================================================================
+ * SDL2 scancode to engine keyNum_t translation
+ * ========================================================================= */
+
+#ifdef USE_SDL2
+static int SDL_ScancodeToKey(SDL_Scancode sc) {
+    switch (sc) {
+        case SDL_SCANCODE_TAB:          return K_TAB;
+        case SDL_SCANCODE_RETURN:       return K_ENTER;
+        case SDL_SCANCODE_ESCAPE:       return K_ESCAPE;
+        case SDL_SCANCODE_SPACE:        return K_SPACE;
+        case SDL_SCANCODE_BACKSPACE:    return K_BACKSPACE;
+        case SDL_SCANCODE_UP:           return K_UPARROW;
+        case SDL_SCANCODE_DOWN:         return K_DOWNARROW;
+        case SDL_SCANCODE_LEFT:         return K_LEFTARROW;
+        case SDL_SCANCODE_RIGHT:        return K_RIGHTARROW;
+        case SDL_SCANCODE_LALT:
+        case SDL_SCANCODE_RALT:         return K_ALT;
+        case SDL_SCANCODE_LCTRL:
+        case SDL_SCANCODE_RCTRL:        return K_CTRL;
+        case SDL_SCANCODE_LSHIFT:
+        case SDL_SCANCODE_RSHIFT:       return K_SHIFT;
+        case SDL_SCANCODE_F1:           return K_F1;
+        case SDL_SCANCODE_F2:           return K_F2;
+        case SDL_SCANCODE_F3:           return K_F3;
+        case SDL_SCANCODE_F4:           return K_F4;
+        case SDL_SCANCODE_F5:           return K_F5;
+        case SDL_SCANCODE_F6:           return K_F6;
+        case SDL_SCANCODE_F7:           return K_F7;
+        case SDL_SCANCODE_F8:           return K_F8;
+        case SDL_SCANCODE_F9:           return K_F9;
+        case SDL_SCANCODE_F10:          return K_F10;
+        case SDL_SCANCODE_F11:          return K_F11;
+        case SDL_SCANCODE_F12:          return K_F12;
+        case SDL_SCANCODE_INSERT:       return K_INS;
+        case SDL_SCANCODE_DELETE:       return K_DEL;
+        case SDL_SCANCODE_PAGEDOWN:     return K_PGDN;
+        case SDL_SCANCODE_PAGEUP:       return K_PGUP;
+        case SDL_SCANCODE_HOME:         return K_HOME;
+        case SDL_SCANCODE_END:          return K_END;
+        case SDL_SCANCODE_PAUSE:        return K_PAUSE;
+        case SDL_SCANCODE_GRAVE:        return '`';
+        default:
+            /* ASCII range keys */
+            if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z)
+                return 'a' + (sc - SDL_SCANCODE_A);
+            if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9)
+                return '1' + (sc - SDL_SCANCODE_1);
+            if (sc == SDL_SCANCODE_0)
+                return '0';
+            if (sc == SDL_SCANCODE_MINUS)    return '-';
+            if (sc == SDL_SCANCODE_EQUALS)   return '=';
+            if (sc == SDL_SCANCODE_LEFTBRACKET)  return '[';
+            if (sc == SDL_SCANCODE_RIGHTBRACKET) return ']';
+            if (sc == SDL_SCANCODE_BACKSLASH)    return '\\';
+            if (sc == SDL_SCANCODE_SEMICOLON)    return ';';
+            if (sc == SDL_SCANCODE_APOSTROPHE)   return '\'';
+            if (sc == SDL_SCANCODE_COMMA)        return ',';
+            if (sc == SDL_SCANCODE_PERIOD)       return '.';
+            if (sc == SDL_SCANCODE_SLASH)        return '/';
+            return 0;
+    }
+}
+
+static int SDL_MouseButtonToKey(int button) {
+    switch (button) {
+        case SDL_BUTTON_LEFT:   return K_MOUSE1;
+        case SDL_BUTTON_RIGHT:  return K_MOUSE2;
+        case SDL_BUTTON_MIDDLE: return K_MOUSE3;
+        case SDL_BUTTON_X1:     return K_MOUSE4;
+        case SDL_BUTTON_X2:     return K_MOUSE5;
+        default:                return 0;
+    }
+}
+#endif /* USE_SDL2 */
+
+/* =========================================================================
+ * Window event processing
+ *
+ * Replaces the Win32 message pump (PeekMessageA/DispatchMessageA).
+ * Translates SDL2 events into engine key/mouse events.
+ * Returns qfalse if the application should quit.
+ * ========================================================================= */
+
+qboolean Win_ProcessEvents(void) {
+#ifdef USE_SDL2
+    SDL_Event event;
+    unsigned int time = (unsigned int)Sys_Milliseconds();
+
+    while (SDL_PollEvent(&event)) {
+        switch (event.type) {
+            case SDL_QUIT:
+                return qfalse;
+
+            case SDL_WINDOWEVENT:
+                switch (event.window.event) {
+                    case SDL_WINDOWEVENT_MINIMIZED:
+                        fakk_window.minimized = qtrue;
+                        fakk_window.active = qfalse;
+                        break;
+                    case SDL_WINDOWEVENT_RESTORED:
+                        fakk_window.minimized = qfalse;
+                        fakk_window.active = qtrue;
+                        break;
+                    case SDL_WINDOWEVENT_FOCUS_GAINED:
+                        fakk_window.active = qtrue;
+                        IN_Activate(qtrue);
+                        break;
+                    case SDL_WINDOWEVENT_FOCUS_LOST:
+                        fakk_window.active = qfalse;
+                        IN_Activate(qfalse);
+                        break;
+                    case SDL_WINDOWEVENT_SIZE_CHANGED:
+                        fakk_window.width = event.window.data1;
+                        fakk_window.height = event.window.data2;
+                        break;
+                }
+                break;
+
+            case SDL_KEYDOWN:
+            case SDL_KEYUP: {
+                int key = SDL_ScancodeToKey(event.key.keysym.scancode);
+                qboolean down = (event.type == SDL_KEYDOWN) ? qtrue : qfalse;
+                if (key && key_event_callback)
+                    key_event_callback(key, down, time);
+                break;
+            }
+
+            case SDL_TEXTINPUT: {
+                /* Feed printable characters for console input */
+                if (char_event_callback) {
+                    for (int i = 0; event.text.text[i]; i++) {
+                        unsigned char ch = (unsigned char)event.text.text[i];
+                        if (ch >= 32 && ch < 127)
+                            char_event_callback(ch);
+                    }
+                }
+                break;
+            }
+
+            case SDL_MOUSEBUTTONDOWN:
+            case SDL_MOUSEBUTTONUP: {
+                int key = SDL_MouseButtonToKey(event.button.button);
+                qboolean down = (event.type == SDL_MOUSEBUTTONDOWN) ? qtrue : qfalse;
+                if (key && key_event_callback)
+                    key_event_callback(key, down, time);
+                break;
+            }
+
+            case SDL_MOUSEWHEEL:
+                if (key_event_callback) {
+                    if (event.wheel.y > 0) {
+                        key_event_callback(K_MWHEELUP, qtrue, time);
+                        key_event_callback(K_MWHEELUP, qfalse, time);
+                    } else if (event.wheel.y < 0) {
+                        key_event_callback(K_MWHEELDOWN, qtrue, time);
+                        key_event_callback(K_MWHEELDOWN, qfalse, time);
+                    }
+                }
+                break;
+
+            case SDL_MOUSEMOTION:
+                if (mouse_move_callback && fakk_window.active)
+                    mouse_move_callback(event.motion.xrel, event.motion.yrel);
+                break;
+        }
+    }
+#endif
+    return qtrue;
+}
+
+/* =========================================================================
+ * Gamma control
+ *
+ * Original used SetDeviceGammaRamp/GetDeviceGammaRamp (GDI32.DLL).
+ * SDL2 provides SDL_SetWindowBrightness as a simple alternative.
+ * ========================================================================= */
+
+void Win_SetGamma(float gamma) {
+#ifdef USE_SDL2
+    if (fakk_window.window) {
+        SDL_SetWindowBrightness(fakk_window.window, gamma);
+    }
+#else
+    (void)gamma;
+#endif
+}
+
+void Win_GetGamma(float *gamma) {
+#ifdef USE_SDL2
+    if (fakk_window.window && gamma) {
+        *gamma = SDL_GetWindowBrightness(fakk_window.window);
+        return;
+    }
+#endif
+    if (gamma) *gamma = 1.0f;
 }
 
 /* =========================================================================
