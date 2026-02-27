@@ -180,17 +180,20 @@ int TIKI_AnimRandom(dtiki_t handle, const char *name) {
     return matches[Sys_Milliseconds() % count];
 }
 
+/* Accessors from tiki_skel.c */
+extern int   TIKI_SkelAnimNumFrames(const char *filename);
+extern float TIKI_SkelAnimTotalTime(const char *filename);
+
 int TIKI_AnimNumFrames(dtiki_t handle, int animnum) {
-    /* Frame count comes from the .ska/.tan binary file, not the .tik text.
-     * For now return 0 -- this will be filled when we parse animation binaries. */
-    (void)handle; (void)animnum;
-    return 0;
+    tiki_model_t *m = TIKI_GetModel(handle);
+    if (!m || animnum < 0 || animnum >= m->num_anims) return 0;
+    return TIKI_SkelAnimNumFrames(m->anims[animnum].filename);
 }
 
 float TIKI_AnimTime(dtiki_t handle, int animnum) {
-    /* Animation length in seconds -- requires binary animation data */
-    (void)handle; (void)animnum;
-    return 0.0f;
+    tiki_model_t *m = TIKI_GetModel(handle);
+    if (!m || animnum < 0 || animnum >= m->num_anims) return 0.0f;
+    return TIKI_SkelAnimTotalTime(m->anims[animnum].filename);
 }
 
 int TIKI_AnimFlags(dtiki_t handle, int animnum) {

@@ -321,3 +321,7 @@ int R_GetNumInlineModels(void) {
 qboolean R_WorldLoaded(void) {
     return s_world.loaded;
 }
+
+void *R_GetBSPWorldPtr(void) {
+    return &s_world;
+}

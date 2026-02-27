@@ -22,6 +22,7 @@
 #include "../common/qcommon.h"
 #include "../common/qfiles.h"
 #include "tr_types.h"
+#include "r_gl.h"
 #include <string.h>
 #include <math.h>
 
@@ -128,7 +129,7 @@ typedef struct {
     int     numPages;
     int     pageWidth;
     int     pageHeight;
-    /* TODO: GL texture handles for each atlas page */
+    GLuint  textures[MAX_LIGHTMAP_PAGES];
 } lightmapAtlas_t;
 
 static lightmapAtlas_t r_lightmapAtlas;
@@ -145,22 +146,33 @@ void R_LoadLightmaps(const byte *data, int dataLen) {
     Com_Printf("Loading %d lightmap blocks (%d bytes each)\n",
                numBlocks, blockSize);
 
+    if (numBlocks > MAX_LIGHTMAP_PAGES) {
+        Com_Printf("WARNING: %d lightmap blocks exceeds max %d\n",
+                   numBlocks, MAX_LIGHTMAP_PAGES);
+        numBlocks = MAX_LIGHTMAP_PAGES;
+    }
+
     r_lightmapAtlas.numPages = numBlocks;
     r_lightmapAtlas.pageWidth = LIGHTMAP_SIZE;
     r_lightmapAtlas.pageHeight = LIGHTMAP_SIZE;
 
-    /* TODO: Upload lightmap data to GL textures
-     *
-     * For each block:
-     *   glGenTextures(1, &texId)
-     *   glBindTexture(GL_TEXTURE_2D, texId)
-     *   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 128, 128, 0,
-     *                GL_RGB, GL_UNSIGNED_BYTE, blockData)
-     *   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-     *   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-     *   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-     *   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-     */
+    /* Upload lightmap data to GL textures */
+    glGenTextures(numBlocks, r_lightmapAtlas.textures);
+
+    for (int i = 0; i < numBlocks; i++) {
+        const byte *blockData = data + i * blockSize;
+
+        glBindTexture(GL_TEXTURE_2D, r_lightmapAtlas.textures[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, LIGHTMAP_SIZE, LIGHTMAP_SIZE, 0,
+                     GL_RGB, GL_UNSIGNED_BYTE, blockData);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+    Com_Printf("Uploaded %d lightmap textures\n", numBlocks);
 }
 
 /* =========================================================================
@@ -259,6 +271,15 @@ void R_InitLighting(void) {
     Com_Printf("Lighting initialized\n");
 }
 
+GLuint R_GetLightmapTexture(int index) {
+    if (index < 0 || index >= r_lightmapAtlas.numPages) return 0;
+    return r_lightmapAtlas.textures[index];
+}
+
 void R_ShutdownLighting(void) {
     r_numDlights = 0;
+    if (r_lightmapAtlas.numPages > 0) {
+        glDeleteTextures(r_lightmapAtlas.numPages, r_lightmapAtlas.textures);
+        memset(&r_lightmapAtlas, 0, sizeof(r_lightmapAtlas));
+    }
 }

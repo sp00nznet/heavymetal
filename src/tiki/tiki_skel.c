@@ -370,6 +370,89 @@ int TIKI_SkeletonNumSurfaces(const char *skelname) {
 }
 
 /* =========================================================================
+ * Animation queries -- used by tiki_anim.c to get real data
+ * ========================================================================= */
+
+int TIKI_SkelAnimNumFrames(const char *filename) {
+    skelAnim_t *anim = TIKI_LoadSkelAnim(filename);
+    return anim ? anim->numFrames : 0;
+}
+
+float TIKI_SkelAnimTotalTime(const char *filename) {
+    skelAnim_t *anim = TIKI_LoadSkelAnim(filename);
+    return anim ? anim->totalTime : 0.0f;
+}
+
+float TIKI_SkelAnimFrameTime(const char *filename) {
+    skelAnim_t *anim = TIKI_LoadSkelAnim(filename);
+    return anim ? anim->frameTime : 0.0f;
+}
+
+void TIKI_SkelAnimTotalDelta(const char *filename, vec3_t delta) {
+    skelAnim_t *anim = TIKI_LoadSkelAnim(filename);
+    if (anim) {
+        VectorCopy(anim->totalDelta, delta);
+    } else {
+        VectorClear(delta);
+    }
+}
+
+void TIKI_SkelAnimFrameDelta(const char *filename, int framenum, vec3_t delta) {
+    skelAnim_t *anim = TIKI_LoadSkelAnim(filename);
+    if (!anim || !anim->frameData) {
+        VectorClear(delta);
+        return;
+    }
+
+    const skelAnimFrame_t *frame = TIKI_GetAnimFrame(anim, framenum);
+    if (frame) {
+        VectorCopy(frame->delta, delta);
+    } else {
+        VectorClear(delta);
+    }
+}
+
+void TIKI_SkelAnimFrameBounds(const char *filename, int framenum,
+                               vec3_t mins, vec3_t maxs) {
+    skelAnim_t *anim = TIKI_LoadSkelAnim(filename);
+    if (!anim || !anim->frameData) {
+        VectorSet(mins, -16, -16, 0);
+        VectorSet(maxs, 16, 16, 72);
+        return;
+    }
+
+    const skelAnimFrame_t *frame = TIKI_GetAnimFrame(anim, framenum);
+    if (frame) {
+        VectorCopy(frame->bounds[0], mins);
+        VectorCopy(frame->bounds[1], maxs);
+    } else {
+        VectorSet(mins, -16, -16, 0);
+        VectorSet(maxs, 16, 16, 72);
+    }
+}
+
+float TIKI_SkelAnimFrameRadius(const char *filename, int framenum) {
+    skelAnim_t *anim = TIKI_LoadSkelAnim(filename);
+    if (!anim || !anim->frameData) return 0.0f;
+
+    const skelAnimFrame_t *frame = TIKI_GetAnimFrame(anim, framenum);
+    return frame ? frame->radius : 0.0f;
+}
+
+qboolean TIKI_SkelAnimGetBoneTransform(const char *filename, int framenum,
+                                         int bonenum, float *quat, float *offset) {
+    skelAnim_t *anim = TIKI_LoadSkelAnim(filename);
+    if (!anim || !anim->frameData) return qfalse;
+    if (bonenum < 0 || bonenum >= anim->numBones) return qfalse;
+
+    const skelAnimFrame_t *frame = TIKI_GetAnimFrame(anim, framenum);
+    if (!frame) return qfalse;
+
+    TIKI_DecompressBone(&frame->bones[bonenum], quat, offset);
+    return qtrue;
+}
+
+/* =========================================================================
  * Cleanup
  * ========================================================================= */
 

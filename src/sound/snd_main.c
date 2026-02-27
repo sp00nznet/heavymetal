@@ -134,33 +134,176 @@ void S_Respatialize(int entityNum, vec3_t origin, vec3_t axis[3]) {
  * and the game switches between them based on combat/exploration state.
  * ========================================================================= */
 
+/* =========================================================================
+ * Music system state
+ *
+ * FAKK2's music system uses "moods" (normal, action, suspense, etc.)
+ * with soundtrack definition files that map moods to track filenames.
+ * The system crossfades between tracks when the mood changes.
+ *
+ * Soundtrack files are text files in the format:
+ *   <mood_name> <track_filename>
+ * e.g.:
+ *   normal   music/jungle_normal.wav
+ *   action   music/jungle_action.wav
+ *   suspense music/jungle_suspense.wav
+ * ========================================================================= */
+
+#define MUSIC_MAX_MOODS     16
+#define MUSIC_MOOD_NAME_LEN 32
+#define MUSIC_MAX_TRACKS    32
+
+typedef struct {
+    char    name[MUSIC_MOOD_NAME_LEN];
+    char    filename[MAX_QPATH];
+} musicTrack_t;
+
+static struct {
+    /* Soundtrack definition */
+    char            soundtrackName[MAX_QPATH];
+    musicTrack_t    tracks[MUSIC_MAX_TRACKS];
+    int             numTracks;
+
+    /* Current playback state */
+    int             currentMood;
+    int             fallbackMood;
+    sfxHandle_t     currentTrack;
+    float           musicVolume;
+    float           fadeTarget;
+    float           fadeRate;        /* volume change per second */
+
+    qboolean        playing;
+} music;
+
+static const char *musicMoodNames[] = {
+    "normal", "action", "suspense", "mystery", "success",
+    "failure", "surprise", "special", "aux1", "aux2",
+    "aux3", "aux4", "aux5", "aux6", "aux7", "aux8"
+};
+
 void S_StartMusic(const char *intro, const char *loop) {
-    Com_DPrintf("S_StartMusic: %s / %s (stub)\n",
+    if (!snd_initialized) return;
+
+    Com_DPrintf("S_StartMusic: intro=%s loop=%s\n",
                 intro ? intro : "(none)", loop ? loop : "(none)");
-    /* TODO: Stream and crossfade music tracks */
+
+    /* Register and play the intro track (or loop if no intro) */
+    const char *trackName = intro ? intro : loop;
+    if (trackName && trackName[0]) {
+        music.currentTrack = SND_RegisterSound(trackName);
+        SND_StartSound(NULL, -1, 0, music.currentTrack,
+                       music.musicVolume, 0.0f, 1.0f);
+        music.playing = qtrue;
+    }
 }
 
 void S_StopMusic(void) {
-    /* TODO: Fade out and stop music */
+    if (!snd_initialized) return;
+    SND_StopAllSounds();  /* stop all channels including music */
+    music.playing = qfalse;
+    music.currentTrack = 0;
 }
 
 void S_SetMusicMood(int mood, float volume) {
-    (void)mood; (void)volume;
-    /* TODO: Transition to mood-appropriate music track */
+    if (!snd_initialized) return;
+    if (mood < 0 || mood >= MUSIC_MAX_MOODS) return;
+
+    music.currentMood = mood;
+    music.musicVolume = volume;
+
+    /* Find track for this mood */
+    const char *moodName = musicMoodNames[mood];
+    for (int i = 0; i < music.numTracks; i++) {
+        if (!Q_stricmp(music.tracks[i].name, moodName)) {
+            sfxHandle_t newTrack = SND_RegisterSound(music.tracks[i].filename);
+            if (newTrack != music.currentTrack) {
+                music.currentTrack = newTrack;
+                SND_StartSound(NULL, -1, 0, newTrack, volume, 0.0f, 1.0f);
+                music.playing = qtrue;
+            }
+            return;
+        }
+    }
+    Com_DPrintf("S_SetMusicMood: no track for mood '%s'\n", moodName);
 }
 
 void MUSIC_NewSoundtrack(const char *name) {
-    Com_DPrintf("MUSIC_NewSoundtrack: %s (stub)\n", name ? name : "(null)");
-    /* TODO: Load soundtrack definition file */
+    if (!name || !name[0]) return;
+
+    Com_DPrintf("MUSIC_NewSoundtrack: %s\n", name);
+    Q_strncpyz(music.soundtrackName, name, sizeof(music.soundtrackName));
+    music.numTracks = 0;
+
+    /* Try to load soundtrack definition file */
+    char path[MAX_QPATH];
+    snprintf(path, sizeof(path), "music/%s.mus", name);
+
+    void *buffer;
+    long len = FS_ReadFile(path, &buffer);
+    if (len <= 0 || !buffer) {
+        /* Try alternate path */
+        snprintf(path, sizeof(path), "sound/music/%s.mus", name);
+        len = FS_ReadFile(path, &buffer);
+    }
+
+    if (len > 0 && buffer) {
+        /* Parse soundtrack: each line is "mood_name filename" */
+        const char *data = (const char *)buffer;
+        const char *p = data;
+        while (*p && music.numTracks < MUSIC_MAX_TRACKS) {
+            /* Skip whitespace */
+            while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+            if (!*p || *p == '#') break;
+
+            /* Read mood name */
+            char moodName[MUSIC_MOOD_NAME_LEN];
+            int mi = 0;
+            while (*p && *p != ' ' && *p != '\t' && mi < MUSIC_MOOD_NAME_LEN - 1)
+                moodName[mi++] = *p++;
+            moodName[mi] = '\0';
+
+            /* Skip whitespace */
+            while (*p == ' ' || *p == '\t') p++;
+
+            /* Read filename */
+            char filename[MAX_QPATH];
+            int fi = 0;
+            while (*p && *p != '\r' && *p != '\n' && fi < MAX_QPATH - 1)
+                filename[fi++] = *p++;
+            filename[fi] = '\0';
+
+            if (moodName[0] && filename[0]) {
+                Q_strncpyz(music.tracks[music.numTracks].name, moodName,
+                           sizeof(music.tracks[0].name));
+                Q_strncpyz(music.tracks[music.numTracks].filename, filename,
+                           sizeof(music.tracks[0].filename));
+                music.numTracks++;
+            }
+
+            /* Skip to next line */
+            while (*p && *p != '\n') p++;
+        }
+        FS_FreeFile(buffer);
+        Com_DPrintf("Loaded soundtrack '%s': %d tracks\n", name, music.numTracks);
+    } else {
+        Com_DPrintf("MUSIC_NewSoundtrack: couldn't load '%s'\n", path);
+    }
 }
 
 void MUSIC_UpdateMood(int current_mood, int fallback_mood) {
-    (void)current_mood; (void)fallback_mood;
-    /* TODO: Update current music mood */
+    if (music.currentMood != current_mood) {
+        music.currentMood = current_mood;
+        music.fallbackMood = fallback_mood;
+        S_SetMusicMood(current_mood, music.musicVolume);
+    }
 }
 
 void MUSIC_UpdateVolume(float volume, float fade_time) {
-    (void)fade_time;
+    music.musicVolume = volume;
+    if (fade_time > 0.0f) {
+        music.fadeTarget = volume;
+        music.fadeRate = 1.0f / fade_time;
+    }
     if (snd_initialized) {
         SND_SetVolume(-1.0f, volume); /* -1 = don't change master */
     }

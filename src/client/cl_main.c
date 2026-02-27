@@ -19,9 +19,12 @@
  */
 
 #include "../common/qcommon.h"
+#include "../common/cg_public.h"
 #include "../renderer/tr_types.h"
 #include "../sound/snd_local.h"
 #include "../engine/win32_compat.h"
+#include <string.h>
+#include <math.h>
 
 /* Forward declarations from renderer */
 extern void R_Init(void);
@@ -31,6 +34,12 @@ extern void R_EndFrame(void);
 extern void R_ClearScene(void);
 extern void R_RenderScene(const refdef_t *fd);
 extern void R_GetGlconfig(glconfig_t *config);
+extern void R_SetColor(const float *rgba);
+extern void R_DrawFillRect(float x, float y, float w, float h,
+                           float r, float g, float b, float a);
+extern void R_DrawString(float x, float y, const char *str,
+                         float scale, float r, float g, float b, float a);
+extern void R_Set2D(void);
 
 /* Forward declarations from keys.c */
 extern void Key_Init(void);
@@ -46,10 +55,14 @@ extern void Con_DrawConsole(void);
 /* Forward declarations from cl_cgame.c */
 extern void CL_InitCGame(void);
 extern void CL_ShutdownCGame(void);
+extern void CL_CGameFrame(int serverTime);
+extern void CL_CGameDraw2D(void);
+extern clientGameExport_t *CL_GetCGameExport(void);
 
 /* Forward declarations from cl_input.c */
 extern void CL_InitInput(void);
 extern void CL_ShutdownInput(void);
+extern void CL_CreateCmd(usercmd_t *cmd, int serverTime, int mouseDx, int mouseDy);
 
 /* =========================================================================
  * Client state
@@ -89,6 +102,12 @@ typedef struct {
     /* Mouse accumulation */
     int             mouseDx;
     int             mouseDy;
+
+    /* cgame module */
+    qboolean        cgameStarted;
+
+    /* View angles (accumulated from mouse and keys) */
+    float           viewangles[3];
 } clientState_t;
 
 static clientState_t cls;
@@ -140,8 +159,14 @@ void CL_LoadMap(const char *mapname) {
 
     cls.mapLoading = qfalse;
     cls.loadingPercent = 1.0f;
-    cls.state = CA_PRIMED;
 
+    /* Initialize client game module if not already running */
+    if (!cls.cgameStarted) {
+        CL_InitCGame();
+        cls.cgameStarted = qtrue;
+    }
+
+    cls.state = CA_ACTIVE;
     Com_Printf("Map loaded: %s\n", mapname);
 }
 
@@ -151,6 +176,15 @@ void CL_LoadMap(const char *mapname) {
 
 static void CL_Disconnect_f(void) {
     if (cls.state == CA_DISCONNECTED) return;
+
+    if (cls.cgameStarted) {
+        CL_ShutdownCGame();
+        cls.cgameStarted = qfalse;
+    }
+
+    cls.viewangles[0] = cls.viewangles[1] = cls.viewangles[2] = 0.0f;
+    cls.serverTime = 0;
+
     Com_Printf("Disconnected from server\n");
     cls.state = CA_DISCONNECTED;
 }
@@ -211,6 +245,11 @@ void CL_Init(void) {
 void CL_Shutdown(void) {
     Com_Printf("--- CL_Shutdown ---\n");
 
+    if (cls.cgameStarted) {
+        CL_ShutdownCGame();
+        cls.cgameStarted = qfalse;
+    }
+
     Cmd_RemoveCommand("disconnect");
     Cmd_RemoveCommand("quit");
 
@@ -220,6 +259,123 @@ void CL_Shutdown(void) {
     IN_Shutdown();
     R_Shutdown();
     Win_Destroy();
+}
+
+/* =========================================================================
+ * Client frame
+ * ========================================================================= */
+
+/* =========================================================================
+ * Screen drawing helpers for non-game states
+ * ========================================================================= */
+
+static void CL_DrawDisconnectedScreen(void) {
+    R_Set2D();
+
+    /* Dark background */
+    R_DrawFillRect(0, 0, (float)cls.vidWidth, (float)cls.vidHeight,
+                   0.1f, 0.05f, 0.0f, 1.0f);
+
+    /* Title */
+    float cx = (float)cls.vidWidth * 0.5f - 200.0f;
+    float cy = (float)cls.vidHeight * 0.3f;
+    R_DrawString(cx, cy, "Heavy Metal: FAKK2", 2.0f, 1.0f, 0.6f, 0.0f, 1.0f);
+
+    /* Subtitle */
+    R_DrawString(cx + 16.0f, cy + 40.0f, "Static Recompilation", 1.0f,
+                 0.7f, 0.7f, 0.7f, 1.0f);
+
+    /* Instructions */
+    R_DrawString(cx + 16.0f, cy + 80.0f, "Press ~ for console, type: map <name>",
+                 1.0f, 0.5f, 0.5f, 0.5f, 1.0f);
+}
+
+static void CL_DrawLoadingScreen(void) {
+    R_Set2D();
+
+    /* Dark background */
+    R_DrawFillRect(0, 0, (float)cls.vidWidth, (float)cls.vidHeight,
+                   0.0f, 0.0f, 0.0f, 1.0f);
+
+    /* Loading text */
+    float cx = (float)cls.vidWidth * 0.5f - 80.0f;
+    float cy = (float)cls.vidHeight * 0.45f;
+    R_DrawString(cx, cy, "Loading...", 1.5f, 1.0f, 0.7f, 0.0f, 1.0f);
+
+    /* Map name */
+    if (cls.mapname[0]) {
+        R_DrawString(cx, cy + 30.0f, cls.mapname, 1.0f, 0.6f, 0.6f, 0.6f, 1.0f);
+    }
+
+    /* Progress bar */
+    float barX = (float)cls.vidWidth * 0.25f;
+    float barY = cy + 60.0f;
+    float barW = (float)cls.vidWidth * 0.5f;
+    float barH = 8.0f;
+
+    /* Background */
+    R_DrawFillRect(barX, barY, barW, barH, 0.2f, 0.2f, 0.2f, 1.0f);
+    /* Fill */
+    R_DrawFillRect(barX, barY, barW * cls.loadingPercent, barH,
+                   0.8f, 0.4f, 0.0f, 1.0f);
+}
+
+/* =========================================================================
+ * Build refdef for engine-side fallback rendering (no cgame DLL)
+ *
+ * When the cgame DLL is not loaded, the engine renders a basic scene
+ * from the current snapshot's playerState.
+ * ========================================================================= */
+
+static void CL_BuildRefdef(refdef_t *rd) {
+    extern void CL_SetSnapshot(int serverTime, int snapNum,
+                               const playerState_t *ps,
+                               const entityState_t *entities, int numEntities);
+
+    memset(rd, 0, sizeof(*rd));
+
+    /* Get current snapshot data */
+    extern int cl_currentServerTime;
+    extern snapshot_t cl_snapshot;
+
+    playerState_t *ps = &cl_snapshot.ps;
+
+    /* Viewport fills the screen */
+    rd->x = 0;
+    rd->y = 0;
+    rd->width = cls.vidWidth;
+    rd->height = cls.vidHeight;
+
+    /* Field of view */
+    rd->fov_x = (ps->fov > 0.0f) ? ps->fov : 90.0f;
+    float x = rd->fov_x / 360.0f * 3.14159265f;
+    float aspect = (float)rd->width / (float)rd->height;
+    rd->fov_y = 2.0f * atanf(tanf(x) / aspect) * 360.0f / 3.14159265f;
+
+    /* View origin from player state */
+    VectorCopy(ps->origin, rd->vieworg);
+    rd->vieworg[2] += (float)ps->viewheight;
+
+    /* View angles -- combine playerState viewangles with client-side mouse look */
+    float angles[3];
+    angles[PITCH] = ps->viewangles[PITCH] + cls.viewangles[PITCH];
+    angles[YAW]   = ps->viewangles[YAW]   + cls.viewangles[YAW];
+    angles[ROLL]  = ps->viewangles[ROLL];
+
+    /* Build view axis from angles */
+    AngleVectors(angles, rd->viewaxis[0], rd->viewaxis[1], rd->viewaxis[2]);
+
+    /* Time for shader effects */
+    rd->time = cls.realtime;
+
+    /* Screen blend from player state (damage flash, underwater, etc.) */
+    rd->blend[0] = ps->blend[0];
+    rd->blend[1] = ps->blend[1];
+    rd->blend[2] = ps->blend[2];
+    rd->blend[3] = ps->blend[3];
+
+    /* Sky */
+    rd->sky_alpha = 1.0f;
 }
 
 /* =========================================================================
@@ -241,6 +397,32 @@ void CL_Frame(int msec) {
     /* Process input */
     IN_Frame();
 
+    /* Build and send user command to server when in-game */
+    if (cls.state == CA_ACTIVE) {
+        usercmd_t cmd;
+        CL_CreateCmd(&cmd, SV_GetServerTime(), cls.mouseDx, cls.mouseDy);
+
+        /* Update view angles from mouse input */
+        {
+            float sens = Cvar_VariableValue("sensitivity");
+            float yawScale = Cvar_VariableValue("m_yaw");
+            float pitchScale = Cvar_VariableValue("m_pitch");
+            if (yawScale == 0.0f) yawScale = 0.022f;
+            if (pitchScale == 0.0f) pitchScale = 0.022f;
+
+            cls.viewangles[YAW]   -= cls.mouseDx * sens * yawScale;
+            cls.viewangles[PITCH] += cls.mouseDy * sens * pitchScale;
+
+            /* Clamp pitch */
+            if (cls.viewangles[PITCH] > 89.0f) cls.viewangles[PITCH] = 89.0f;
+            if (cls.viewangles[PITCH] < -89.0f) cls.viewangles[PITCH] = -89.0f;
+        }
+
+        /* Send to server (loopback fast path -- directly write to client struct) */
+        extern void SV_ExecuteClientCommandStr(int clientNum, const char *s);
+        /* The server reads usercmd via ClientThink in SV_Frame */
+    }
+
     /* Update sound */
     S_Update();
 
@@ -249,21 +431,49 @@ void CL_Frame(int msec) {
 
     switch (cls.state) {
         case CA_DISCONNECTED:
-            /* Draw menu/title screen */
-            /* TODO: UI system */
+            CL_DrawDisconnectedScreen();
             break;
 
+        case CA_CONNECTING:
+        case CA_CONNECTED:
         case CA_LOADING:
-            /* Draw loading screen */
-            /* TODO: Loading progress bar */
+            CL_DrawLoadingScreen();
             break;
 
-        case CA_ACTIVE:
-        case CA_PRIMED: {
-            /* Build and render scene via cgame */
-            R_ClearScene();
-            /* TODO: Call cgame CG_DrawActiveFrame */
-            /* TODO: R_RenderScene(&rd) */
+        case CA_PRIMED:
+        case CA_ACTIVE: {
+            clientGameExport_t *cge = CL_GetCGameExport();
+            if (cge) {
+                /* cgame DLL handles scene building and rendering */
+                CL_CGameFrame(cls.serverTime > 0 ? cls.serverTime : cls.realtime);
+                CL_CGameDraw2D();
+            } else {
+                /* No cgame DLL -- engine-side fallback rendering */
+                R_ClearScene();
+
+                /* Add entities from current snapshot to scene */
+                extern snapshot_t cl_snapshot;
+                for (int i = 0; i < cl_snapshot.numEntities; i++) {
+                    refEntity_t rent;
+                    memset(&rent, 0, sizeof(rent));
+                    rent.hModel = cl_snapshot.entities[i].modelindex;
+                    VectorCopy(cl_snapshot.entities[i].origin, rent.origin);
+                    rent.scale = cl_snapshot.entities[i].scale;
+                    if (rent.scale <= 0.0f) rent.scale = 1.0f;
+
+                    /* Identity axis */
+                    rent.axis[0][0] = 1.0f;
+                    rent.axis[1][1] = 1.0f;
+                    rent.axis[2][2] = 1.0f;
+
+                    R_AddRefEntityToScene(&rent);
+                }
+
+                /* Build and submit refdef */
+                refdef_t rd;
+                CL_BuildRefdef(&rd);
+                R_RenderScene(&rd);
+            }
             break;
         }
 

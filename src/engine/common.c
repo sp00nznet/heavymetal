@@ -23,6 +23,8 @@
 #include "qcommon.h"
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
 
 /* =========================================================================
  * Cvars registered by the engine
@@ -97,7 +99,8 @@ void Com_Init(int argc, char **argv) {
     Sys_Init();
 
     /* Memory manager */
-    /* TODO: Z_Init(), Hunk_Init() */
+    Z_Init();
+    Hunk_Init();
 
     /* Core systems */
     Cbuf_Init();
@@ -214,36 +217,186 @@ void Com_Shutdown(void) {
 }
 
 /* =========================================================================
- * Stub implementations (to be filled in during recomp)
+ * Zone memory allocator -- tagged allocation with Z_FreeTags support
+ *
+ * Every Z_TagMalloc allocation is tracked in a doubly-linked list
+ * so Z_FreeTags can free all allocations of a given tag at once.
+ * This matches the original Q3/FAKK2 zone allocator semantics.
+ *
+ * The actual memory layout per allocation:
+ *   [zoneHeader_t][user data...]
+ * The pointer returned to the caller points past the header.
  * ========================================================================= */
 
-/* Memory -- simple passthrough for now */
-void *Z_Malloc(int size) {
-    void *ptr = calloc(1, size);
-    if (!ptr) Com_Error(ERR_FATAL, "Z_Malloc: failed to allocate %d bytes", size);
-    return ptr;
+#define ZONE_MAGIC  0x1D4A11C  /* "idalloc" */
+
+typedef struct zoneHeader_s {
+    int                     magic;
+    int                     size;       /* user-requested size */
+    memtag_t                tag;
+    struct zoneHeader_s     *prev;
+    struct zoneHeader_s     *next;
+} zoneHeader_t;
+
+static zoneHeader_t zone_head;      /* sentinel node */
+static int          zone_count;     /* number of active allocations */
+static int          zone_bytes;     /* total bytes in active allocations */
+
+static void Z_Init(void) {
+    zone_head.next = &zone_head;
+    zone_head.prev = &zone_head;
+    zone_head.magic = ZONE_MAGIC;
+    zone_head.tag = TAG_FREE;
+    zone_count = 0;
+    zone_bytes = 0;
 }
 
 void *Z_TagMalloc(int size, memtag_t tag) {
-    (void)tag;
-    return Z_Malloc(size);
+    if (size <= 0) {
+        Com_Error(ERR_FATAL, "Z_TagMalloc: bad size %d", size);
+    }
+
+    int allocSize = size + (int)sizeof(zoneHeader_t);
+    zoneHeader_t *hdr = (zoneHeader_t *)calloc(1, allocSize);
+    if (!hdr) {
+        Com_Error(ERR_FATAL, "Z_TagMalloc: failed to allocate %d bytes (tag %d)", size, tag);
+    }
+
+    hdr->magic = ZONE_MAGIC;
+    hdr->size = size;
+    hdr->tag = tag;
+
+    /* Insert at head of list */
+    hdr->next = zone_head.next;
+    hdr->prev = &zone_head;
+    zone_head.next->prev = hdr;
+    zone_head.next = hdr;
+
+    zone_count++;
+    zone_bytes += size;
+
+    return (void *)(hdr + 1);
+}
+
+void *Z_Malloc(int size) {
+    return Z_TagMalloc(size, TAG_GENERAL);
 }
 
 void Z_Free(void *ptr) {
-    if (ptr) free(ptr);
+    if (!ptr) return;
+
+    zoneHeader_t *hdr = ((zoneHeader_t *)ptr) - 1;
+    if (hdr->magic != ZONE_MAGIC) {
+        Com_Error(ERR_FATAL, "Z_Free: bad magic (double free or corruption)");
+    }
+
+    /* Unlink from list */
+    hdr->prev->next = hdr->next;
+    hdr->next->prev = hdr->prev;
+
+    zone_count--;
+    zone_bytes -= hdr->size;
+
+    hdr->magic = 0;  /* poison to catch use-after-free */
+    free(hdr);
 }
 
 void Z_FreeTags(memtag_t tag) {
-    (void)tag;
-    /* TODO: Implement tagged memory tracking */
+    zoneHeader_t *node = zone_head.next;
+    int freed = 0;
+
+    while (node != &zone_head) {
+        zoneHeader_t *next = node->next;
+        if (node->tag == tag) {
+            /* Unlink */
+            node->prev->next = node->next;
+            node->next->prev = node->prev;
+            zone_count--;
+            zone_bytes -= node->size;
+            node->magic = 0;
+            free(node);
+            freed++;
+        }
+        node = next;
+    }
+
+    if (freed > 0) {
+        Com_DPrintf("Z_FreeTags(%d): freed %d allocations\n", tag, freed);
+    }
+}
+
+/* =========================================================================
+ * Hunk allocator -- level-scoped bump allocator
+ *
+ * The hunk is a large contiguous block used for per-level data
+ * (BSP, models, textures). Hunk_Clear resets the pointer on
+ * level transitions, effectively freeing all level data at once.
+ *
+ * Original FAKK2 used ~64MB hunk. We use 256MB for 64-bit.
+ * ========================================================================= */
+
+#define HUNK_SIZE   (256 * 1024 * 1024)  /* 256 MB */
+#define HUNK_MAGIC  0x48554E4B           /* "HUNK" */
+
+static struct {
+    byte    *base;
+    int     size;
+    int     used;
+    int     peak;
+    int     tempUsed;       /* temp allocations from the top */
+    int     initialized;
+} hunk;
+
+static void Hunk_Init(void) {
+    hunk.base = (byte *)malloc(HUNK_SIZE);
+    if (!hunk.base) {
+        Com_Error(ERR_FATAL, "Hunk_Init: failed to allocate %d MB", HUNK_SIZE / (1024*1024));
+    }
+    hunk.size = HUNK_SIZE;
+    hunk.used = 0;
+    hunk.peak = 0;
+    hunk.tempUsed = 0;
+    hunk.initialized = 1;
+    Com_Printf("Hunk initialized: %d MB\n", HUNK_SIZE / (1024*1024));
 }
 
 void *Hunk_Alloc(int size) {
-    return Z_Malloc(size);
+    if (!hunk.initialized) {
+        /* Fallback before hunk is set up */
+        return Z_TagMalloc(size, TAG_GENERAL);
+    }
+    if (size <= 0) {
+        Com_Error(ERR_FATAL, "Hunk_Alloc: bad size %d", size);
+    }
+
+    /* Align to 16 bytes */
+    size = (size + 15) & ~15;
+
+    if (hunk.used + size > hunk.size - hunk.tempUsed) {
+        Com_Error(ERR_FATAL, "Hunk_Alloc: overflow (%d bytes requested, %d/%d used)",
+                  size, hunk.used, hunk.size);
+    }
+
+    void *ptr = hunk.base + hunk.used;
+    hunk.used += size;
+    memset(ptr, 0, size);
+
+    if (hunk.used > hunk.peak) {
+        hunk.peak = hunk.used;
+    }
+
+    return ptr;
 }
 
 void Hunk_Clear(void) {
-    /* TODO: Implement hunk allocator */
+    if (!hunk.initialized) return;
+
+    Com_DPrintf("Hunk_Clear: peak usage was %d KB of %d KB\n",
+                hunk.peak / 1024, hunk.size / 1024);
+
+    hunk.used = 0;
+    hunk.tempUsed = 0;
+    /* Don't zero the memory -- cleared on alloc */
 }
 
 /* Event loop */

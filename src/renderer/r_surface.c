@@ -27,7 +27,9 @@
 #include "../common/qcommon.h"
 #include "../common/qfiles.h"
 #include "tr_types.h"
+#include "r_gl.h"
 #include <string.h>
+#include <math.h>
 
 /* =========================================================================
  * Surface batching
@@ -66,19 +68,23 @@ static int R_MakeSortKey(int shaderIndex, int fogIndex, int entityNum) {
 
 void R_DrawPlanarSurface(const dsurface_t *surf, const drawVert_t *verts,
                           const int *indexes) {
-    if (!surf || surf->numVerts == 0) return;
+    if (!surf || surf->numVerts == 0 || surf->numIndexes == 0) return;
 
-    /* TODO: Submit vertices and indices to OpenGL
-     *
-     * The actual GL calls will look like:
-     *   glBindVertexArray(worldVAO)
-     *   glDrawElements(GL_TRIANGLES, surf->numIndexes, GL_UNSIGNED_INT,
-     *                  offset_to_surface_indices)
-     *
-     * For now, this is a no-op until the GL backend is wired up.
-     */
-    (void)verts;
-    (void)indexes;
+    const drawVert_t *surfVerts = verts + surf->firstVert;
+    const int *surfIndexes = indexes + surf->firstIndex;
+
+    /* Submit triangles using immediate mode (fixed-function pipeline).
+     * This matches the original FAKK2 renderer's approach.
+     * A future optimization would batch into VBOs. */
+    glBegin(GL_TRIANGLES);
+    for (int i = 0; i < surf->numIndexes; i++) {
+        const drawVert_t *v = &surfVerts[surfIndexes[i]];
+        glColor4ubv(v->color);
+        glTexCoord2fv(v->st);
+        glNormal3fv(v->normal);
+        glVertex3fv(v->xyz);
+    }
+    glEnd();
 }
 
 /* =========================================================================
@@ -102,10 +108,11 @@ void R_DrawPatchSurface(const dsurface_t *surf, const drawVert_t *verts,
     if (!surf || surf->numVerts == 0) return;
 
     /* Patches use patchWidth x patchHeight control points.
-     * Tessellation creates a subdivided mesh.
-     * TODO: Implement Bezier subdivision and rendering. */
-    (void)verts;
-    (void)indexes;
+     * Full Bezier tessellation requires generating a subdivided mesh.
+     * For now, render the raw control point triangles if indexes exist. */
+    if (surf->numIndexes > 0) {
+        R_DrawPlanarSurface(surf, verts, indexes);
+    }
 }
 
 /* =========================================================================
@@ -162,30 +169,143 @@ void R_DrawFlare(const dsurface_t *surf) {
  * Surfaces are sorted by shader to minimize state changes.
  * ========================================================================= */
 
+/* =========================================================================
+ * BSP world data accessors (from r_bsp.c)
+ * ========================================================================= */
+
+typedef struct {
+    char        name[MAX_QPATH];
+
+    int         numShaders;
+    dshader_t   *shaders;
+
+    int         numPlanes;
+    dplane_t    *planes;
+
+    int         numNodes;
+    dnode_t     *nodes;
+
+    int         numLeafs;
+    dleaf_t     *leafs;
+
+    int         numLeafSurfaces;
+    int         *leafSurfaces;
+
+    int         numModels;
+    dmodel_t    *models;
+
+    int         numSurfaces;
+    dsurface_t  *surfaces;
+
+    int         numVerts;
+    drawVert_t  *verts;
+
+    int         numIndexes;
+    int         *indexes;
+
+    int         numLightmaps;
+    byte        *lightmapData;
+
+    dvis_t      *vis;
+    int         visLen;
+
+    qboolean    loaded;
+} bspWorldRef_t;
+
+extern qboolean R_WorldLoaded(void);
+
+/* Get BSP world data pointers from r_bsp.c */
+static const bspWorldRef_t *R_GetWorldData(void) {
+    /* Access via extern -- the actual struct in r_bsp.c has more fields,
+     * but the layout of these first fields matches */
+    extern void *R_GetBSPWorldPtr(void);
+    return (const bspWorldRef_t *)R_GetBSPWorldPtr();
+}
+
+/* =========================================================================
+ * Frustum culling (simplified box test)
+ * ========================================================================= */
+
+static float r_frustumPlanes[6][4];  /* 6 planes: left, right, top, bottom, near, far */
+static int r_numFrustumPlanes;
+
+void R_SetupFrustum(const refdef_t *fd) {
+    /* Extract view-projection frustum planes for culling.
+     * For simplicity, we use the vieworg + viewaxis + fov to build planes. */
+    (void)fd;
+    r_numFrustumPlanes = 0;  /* disable frustum culling for now -- draw everything */
+}
+
+static qboolean R_CullBox(const int *mins, const int *maxs) {
+    /* When frustum culling is disabled, nothing is culled */
+    if (r_numFrustumPlanes == 0) return qfalse;
+    (void)mins; (void)maxs;
+    return qfalse;
+}
+
+/* =========================================================================
+ * World surface rendering
+ * ========================================================================= */
+
 void R_DrawWorldSurfaces(void) {
-    extern qboolean R_WorldLoaded(void);
     if (!R_WorldLoaded()) return;
+
+    const bspWorldRef_t *world = R_GetWorldData();
+    if (!world || !world->loaded) return;
 
     numSortSurfaces = 0;
 
-    /* TODO: Full world rendering pipeline:
-     *
-     * 1. Walk BSP tree with frustum and PVS culling
-     * 2. Collect visible surfaces into sortSurfaces[]
-     * 3. Sort by shader (opaque first, then transparent by distance)
-     * 4. For each shader batch:
-     *    a. Bind shader state
-     *    b. For each stage:
-     *       - Set texture
-     *       - Set blend mode
-     *       - Set texture coordinate generation
-     *       - Set color generation
-     *    c. Draw all surfaces in batch
-     *
-     * The BSP tree walk uses the visibility data (PVS) loaded
-     * from LUMP_VISIBILITY to quickly reject entire leaf clusters
-     * that are known to be invisible from the current camera position.
-     */
+    /* Walk all surfaces in the BSP and render based on type.
+     * A full implementation would use BSP tree + PVS for visibility culling.
+     * For now, iterate all surfaces of model 0 (worldspawn). */
+    if (!world->models || world->numModels < 1) return;
+
+    const dmodel_t *worldModel = &world->models[0];
+    int firstSurf = worldModel->firstSurface;
+    int numSurfs = worldModel->numSurfaces;
+
+    /* Set default rendering state for world */
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glEnable(GL_TEXTURE_2D);
+
+    /* Default white color for unlit surfaces */
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+
+    for (int i = 0; i < numSurfs; i++) {
+        int surfIdx = firstSurf + i;
+        if (surfIdx < 0 || surfIdx >= world->numSurfaces) continue;
+
+        const dsurface_t *surf = &world->surfaces[surfIdx];
+
+        /* Skip nodraw surfaces */
+        if (surf->shaderNum >= 0 && surf->shaderNum < world->numShaders) {
+            if (world->shaders[surf->shaderNum].surfaceFlags & SURF_NODRAW) {
+                continue;
+            }
+        }
+
+        /* Dispatch by surface type */
+        switch (surf->surfaceType) {
+            case MST_PLANAR:
+                R_DrawPlanarSurface(surf, world->verts, world->indexes);
+                break;
+            case MST_PATCH:
+                R_DrawPatchSurface(surf, world->verts, world->indexes);
+                break;
+            case MST_TRIANGLE_SOUP:
+                R_DrawTriangleSoup(surf, world->verts, world->indexes);
+                break;
+            case MST_TERRAIN:
+                R_DrawTerrainSurface(surf, world->verts, world->indexes);
+                break;
+            case MST_FLARE:
+                R_DrawFlare(surf);
+                break;
+            default:
+                break;
+        }
+    }
 }
 
 /* =========================================================================
@@ -195,16 +315,51 @@ void R_DrawWorldSurfaces(void) {
  * ========================================================================= */
 
 void R_DrawEntitySurfaces(refEntity_t *entities, int numEntities) {
+    const bspWorldRef_t *world = R_GetWorldData();
+
     for (int i = 0; i < numEntities; i++) {
         refEntity_t *ent = &entities[i];
         if (!ent->hModel) continue;
 
-        /* TODO: Based on model type:
-         * MOD_TIKI: Animate skeleton, skin mesh, draw surfaces
-         * MOD_BRUSH: Draw BSP inline model surfaces
-         * MOD_SPRITE: Draw screen-aligned quad
-         */
-        (void)ent;
+        /* Save GL matrix state */
+        glPushMatrix();
+
+        /* Apply entity transform */
+        glTranslatef(ent->origin[0], ent->origin[1], ent->origin[2]);
+
+        float scale = ent->scale > 0.0f ? ent->scale : 1.0f;
+        if (scale != 1.0f) {
+            glScalef(scale, scale, scale);
+        }
+
+        /* Apply entity rotation if axis is non-zero */
+        if (ent->axis[0][0] != 0.0f || ent->axis[1][1] != 0.0f || ent->axis[2][2] != 0.0f) {
+            float mat[16];
+            mat[0]  = ent->axis[0][0]; mat[4]  = ent->axis[1][0]; mat[8]  = ent->axis[2][0]; mat[12] = 0;
+            mat[1]  = ent->axis[0][1]; mat[5]  = ent->axis[1][1]; mat[9]  = ent->axis[2][1]; mat[13] = 0;
+            mat[2]  = ent->axis[0][2]; mat[6]  = ent->axis[1][2]; mat[10] = ent->axis[2][2]; mat[14] = 0;
+            mat[3]  = 0;              mat[7]  = 0;              mat[11] = 0;              mat[15] = 1;
+            glMultMatrixf(mat);
+        }
+
+        /* Check if this is a BSP inline model (brush entity) */
+        int modelIndex = ent->hModel;
+        if (world && world->loaded && modelIndex > 0 && modelIndex < world->numModels) {
+            /* Brush entity -- draw its surfaces from BSP */
+            const dmodel_t *model = &world->models[modelIndex];
+            glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+
+            for (int j = 0; j < model->numSurfaces; j++) {
+                int surfIdx = model->firstSurface + j;
+                if (surfIdx < 0 || surfIdx >= world->numSurfaces) continue;
+
+                const dsurface_t *surf = &world->surfaces[surfIdx];
+                R_DrawPlanarSurface(surf, world->verts, world->indexes);
+            }
+        }
+        /* TIKI model rendering would go here once skeleton animation is complete */
+
+        glPopMatrix();
     }
 }
 
@@ -245,8 +400,30 @@ void R_AddMark(int shaderHandle, int numPoints, const vec3_t *points,
 }
 
 void R_DrawMarks(void) {
-    /* TODO: Draw all active marks as textured polygons on world surfaces */
-    (void)r_marks;
+    if (r_numMarks == 0) return;
+
+    /* Marks are rendered as alpha-blended polygons on world surfaces */
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+
+    for (int i = 0; i < r_numMarks; i++) {
+        markSurface_t *mark = &r_marks[i];
+        if (mark->numPoints < 3) continue;
+
+        glColor4ubv(mark->color);
+
+        glBegin(GL_TRIANGLE_FAN);
+        for (int j = 0; j < mark->numPoints; j++) {
+            glTexCoord2fv(mark->texcoords[j]);
+            glVertex3fv(mark->points[j]);
+        }
+        glEnd();
+    }
+
+    glDepthMask(GL_TRUE);
+    glEnable(GL_CULL_FACE);
 }
 
 void R_ClearMarks(void) {

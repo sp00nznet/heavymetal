@@ -143,9 +143,9 @@ static void CGI_S_StartLocalSound(const char *sound_name) {
  * ========================================================================= */
 
 static gameState_t      cl_gameState;
-static snapshot_t       cl_snapshot;
+snapshot_t              cl_snapshot;
 static int              cl_currentSnapshot;
-static int              cl_currentServerTime;
+int                     cl_currentServerTime;
 
 /* =========================================================================
  * Snapshot reception -- called from server (loopback fast path)
