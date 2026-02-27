@@ -139,8 +139,11 @@ void    NET_Init(void);
 void    NET_Shutdown(void);
 void    NET_SendPacket(int length, const void *data, netadr_t to);
 qboolean NET_GetPacket(netadr_t *from, msg_t *msg);
+qboolean NET_GetServerPacket(netadr_t *from, msg_t *msg);
 qboolean NET_StringToAdr(const char *s, netadr_t *a);
 char    *NET_AdrToString(netadr_t a);
+void    NET_SendLoopbackToServer(const void *data, int length);
+void    NET_SendLoopbackToClient(const void *data, int length);
 
 /* =========================================================================
  * System interface (platform-specific, implemented in sys_sdl.c)

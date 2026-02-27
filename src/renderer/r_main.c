@@ -18,10 +18,14 @@
 
 #include "../common/qcommon.h"
 #include "tr_types.h"
+#include "r_gl.h"
 #include <string.h>
 #include <math.h>
 
 static glconfig_t glconfig;
+
+/* Expose for r_gl.c */
+glconfig_t *R_GetGlconfigPtr(void) { return &glconfig; }
 
 /* =========================================================================
  * Renderer initialization
@@ -29,13 +33,25 @@ static glconfig_t glconfig;
 
 static void R_InitGL(void) {
     Com_Printf("--- R_InitGL ---\n");
-    /* TODO: Load OpenGL functions via GLimp_GetProcAddress */
+
+    /* Load GL extension functions */
+    R_LoadGLFunctions();
+
+    /* Query GL info */
+    const char *glVendor = (const char *)glGetString(GL_VENDOR);
+    const char *glRenderer = (const char *)glGetString(GL_RENDERER);
+    const char *glVersion = (const char *)glGetString(GL_VERSION);
 
     memset(&glconfig, 0, sizeof(glconfig));
-    Q_strncpyz(glconfig.renderer_string, "OpenGL 4.x (recomp)", sizeof(glconfig.renderer_string));
-    Q_strncpyz(glconfig.vendor_string, "FAKK2 Recomp", sizeof(glconfig.vendor_string));
-    Q_strncpyz(glconfig.version_string, "4.6", sizeof(glconfig.version_string));
-    glconfig.maxTextureSize = 4096;
+    Q_strncpyz(glconfig.renderer_string, glRenderer ? glRenderer : "Unknown",
+               sizeof(glconfig.renderer_string));
+    Q_strncpyz(glconfig.vendor_string, glVendor ? glVendor : "Unknown",
+               sizeof(glconfig.vendor_string));
+    Q_strncpyz(glconfig.version_string, glVersion ? glVersion : "Unknown",
+               sizeof(glconfig.version_string));
+
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &glconfig.maxTextureSize);
+
     glconfig.maxActiveTextures = 32;
     glconfig.colorBits = 32;
     glconfig.depthBits = 24;
@@ -43,6 +59,19 @@ static void R_InitGL(void) {
     glconfig.vidWidth = 1280;
     glconfig.vidHeight = 720;
     glconfig.windowAspect = 16.0f / 9.0f;
+
+    Com_Printf("GL Vendor:   %s\n", glconfig.vendor_string);
+    Com_Printf("GL Renderer: %s\n", glconfig.renderer_string);
+    Com_Printf("GL Version:  %s\n", glconfig.version_string);
+    Com_Printf("Max texture: %d\n", glconfig.maxTextureSize);
+
+    /* Set initial GL state */
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);  /* Q3 convention: front-face culling */
+    glEnable(GL_TEXTURE_2D);
 
     Com_Printf("Renderer: OpenGL initialized\n");
 }
@@ -84,11 +113,14 @@ void R_Shutdown(void) {
  * ========================================================================= */
 
 void R_BeginFrame(void) {
-    /* TODO: Clear buffers, set viewport */
+    glViewport(0, 0, glconfig.vidWidth, glconfig.vidHeight);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 }
 
 void R_EndFrame(void) {
-    /* TODO: Swap buffers */
+    /* Swap buffers (implemented in sys_sdl.c) */
+    extern void Win_SwapBuffers(void);
+    Win_SwapBuffers();
 }
 
 /* =========================================================================
@@ -117,10 +149,7 @@ void R_AddRefSpriteToScene(refEntity_t *ent) {
     R_AddRefEntityToScene(ent);
 }
 
-void R_AddLightToScene(vec3_t origin, float intensity, float r, float g, float b, int type) {
-    (void)origin; (void)intensity; (void)r; (void)g; (void)b; (void)type;
-    /* TODO: Add dynamic light to scene */
-}
+/* R_AddLightToScene is in r_light.c */
 
 void R_AddPolyToScene(qhandle_t hShader, int numVerts, const polyVert_t *verts, int renderfx) {
     (void)hShader; (void)numVerts; (void)verts; (void)renderfx;
@@ -128,16 +157,87 @@ void R_AddPolyToScene(qhandle_t hShader, int numVerts, const polyVert_t *verts, 
 }
 
 void R_RenderScene(const refdef_t *fd) {
-    (void)fd;
-    /* TODO: Full scene render:
-     *   1. Setup view matrix from fd->vieworg/viewaxis
-     *   2. Cull BSP (PVS + frustum)
-     *   3. Draw world surfaces
-     *   4. Draw entities (TIKI models, brush models)
-     *   5. Draw Ghost particles
-     *   6. Draw sky portal
-     *   7. Post-process (screen blend)
-     */
+    if (!fd) return;
+
+    /* Setup 3D projection */
+    glViewport(fd->x, glconfig.vidHeight - (fd->y + fd->height),
+               fd->width, fd->height);
+
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+
+    /* Perspective from field of view */
+    float fovX = fd->fov_x;
+    float fovY = fd->fov_y;
+    if (fovX <= 0.0f) fovX = 90.0f;
+    if (fovY <= 0.0f) fovY = 73.74f; /* ~90 fovx at 4:3 */
+
+    float zNear = 4.0f;
+    float zFar = 8192.0f;  /* FAKK2 default far plane */
+    float ymax = zNear * tanf(fovY * 3.14159f / 360.0f);
+    float xmax = zNear * tanf(fovX * 3.14159f / 360.0f);
+    glFrustum(-xmax, xmax, -ymax, ymax, zNear, zFar);
+
+    /* Setup view matrix from vieworg/viewaxis */
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    /* Q3/FAKK2 coordinate system: +X right, +Y forward, +Z up
+     * OpenGL: +X right, +Y up, -Z forward
+     * Apply rotation then translation */
+    float viewMatrix[16];
+    viewMatrix[0]  = fd->viewaxis[0][0];
+    viewMatrix[4]  = fd->viewaxis[0][1];
+    viewMatrix[8]  = fd->viewaxis[0][2];
+    viewMatrix[12] = 0;
+
+    viewMatrix[1]  = fd->viewaxis[2][0];
+    viewMatrix[5]  = fd->viewaxis[2][1];
+    viewMatrix[9]  = fd->viewaxis[2][2];
+    viewMatrix[13] = 0;
+
+    viewMatrix[2]  = -fd->viewaxis[1][0];
+    viewMatrix[6]  = -fd->viewaxis[1][1];
+    viewMatrix[10] = -fd->viewaxis[1][2];
+    viewMatrix[14] = 0;
+
+    viewMatrix[3]  = 0;
+    viewMatrix[7]  = 0;
+    viewMatrix[11] = 0;
+    viewMatrix[15] = 1;
+
+    glMultMatrixf(viewMatrix);
+    glTranslatef(-fd->vieworg[0], -fd->vieworg[1], -fd->vieworg[2]);
+
+    /* Enable 3D state */
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+
+    /* Draw sky */
+    extern void R_DrawSky(const vec3_t viewOrigin);
+    R_DrawSky(fd->vieworg);
+
+    /* Draw world surfaces */
+    extern void R_DrawWorldSurfaces(void);
+    R_DrawWorldSurfaces();
+
+    /* Draw entities */
+    extern void R_DrawEntitySurfaces(refEntity_t *entities, int numEntities);
+    R_DrawEntitySurfaces(scene_entities, scene_numEntities);
+
+    /* Draw marks/decals */
+    extern void R_DrawMarks(void);
+    R_DrawMarks();
+
+    /* Apply screen blend (damage flash, underwater tint, etc.) */
+    if (fd->blend[3] > 0.0f) {
+        extern void R_Set2D(void);
+        R_Set2D();
+        extern void R_DrawFillRect(float x, float y, float w, float h,
+                                   float r, float g, float b, float a);
+        R_DrawFillRect(0, 0, (float)glconfig.vidWidth, (float)glconfig.vidHeight,
+                       fd->blend[0], fd->blend[1], fd->blend[2], fd->blend[3]);
+    }
 }
 
 refEntity_t *R_GetRenderEntity(int entityNumber) {
@@ -175,7 +275,8 @@ qhandle_t R_RegisterShaderNoMip(const char *name) {
 }
 
 void R_LoadWorldMap(const char *mapname) {
-    Com_DPrintf("R_LoadWorldMap: %s (stub)\n", mapname);
+    extern qboolean R_LoadBSP(const char *name);
+    Com_DPrintf("R_LoadWorldMap: %s\n", mapname);
     R_LoadBSP(mapname);
 }
 
@@ -185,23 +286,51 @@ void R_LoadWorldMap(const char *mapname) {
  * 2D drawing (HUD, menus)
  * ========================================================================= */
 
+static float r_currentColor[4] = { 1, 1, 1, 1 };
+
 void R_SetColor(const float *rgba) {
-    (void)rgba;
-    /* TODO: Set current drawing color */
+    if (rgba) {
+        r_currentColor[0] = rgba[0];
+        r_currentColor[1] = rgba[1];
+        r_currentColor[2] = rgba[2];
+        r_currentColor[3] = rgba[3];
+    } else {
+        r_currentColor[0] = r_currentColor[1] = r_currentColor[2] = r_currentColor[3] = 1.0f;
+    }
+    glColor4fv(r_currentColor);
 }
 
 void R_DrawStretchPic(float x, float y, float w, float h,
                       float s1, float t1, float s2, float t2,
                       qhandle_t hShader) {
-    (void)x; (void)y; (void)w; (void)h;
-    (void)s1; (void)t1; (void)s2; (void)t2;
+    extern void R_Set2D(void);
+    R_Set2D();
+
+    /* TODO: Bind shader texture via hShader */
     (void)hShader;
-    /* TODO: Draw a textured quad in 2D screen space */
+
+    glColor4fv(r_currentColor);
+    glBegin(GL_QUADS);
+    glTexCoord2f(s1, t1); glVertex2f(x, y);
+    glTexCoord2f(s2, t1); glVertex2f(x + w, y);
+    glTexCoord2f(s2, t2); glVertex2f(x + w, y + h);
+    glTexCoord2f(s1, t2); glVertex2f(x, y + h);
+    glEnd();
 }
 
 void R_DrawBox(float x, float y, float w, float h) {
-    (void)x; (void)y; (void)w; (void)h;
-    /* TODO: Draw solid-colored box */
+    extern void R_Set2D(void);
+    R_Set2D();
+
+    glDisable(GL_TEXTURE_2D);
+    glColor4fv(r_currentColor);
+    glBegin(GL_QUADS);
+    glVertex2f(x, y);
+    glVertex2f(x + w, y);
+    glVertex2f(x + w, y + h);
+    glVertex2f(x, y + h);
+    glEnd();
+    glEnable(GL_TEXTURE_2D);
 }
 
 /* =========================================================================
@@ -223,8 +352,15 @@ int R_GetShaderHeight(qhandle_t shader) {
  * ========================================================================= */
 
 void R_DebugLine(vec3_t start, vec3_t end, float r, float g, float b, float alpha) {
-    (void)start; (void)end; (void)r; (void)g; (void)b; (void)alpha;
-    /* TODO: Draw debug line for development visualization */
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_DEPTH_TEST);
+    glColor4f(r, g, b, alpha);
+    glBegin(GL_LINES);
+    glVertex3fv(start);
+    glVertex3fv(end);
+    glEnd();
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_TEXTURE_2D);
 }
 
 /* =========================================================================

@@ -114,8 +114,9 @@ static void CGI_AddCommand(const char *cmd) {
 }
 
 static void CGI_SendClientCommand(const char *s) {
-    /* TODO: Send command string to server */
-    Com_DPrintf("CGI_SendClientCommand: %s\n", s);
+    /* For single-player loopback, execute on server directly */
+    extern void SV_ExecuteClientCommandStr(int clientNum, const char *s);
+    SV_ExecuteClientCommandStr(0, s);
 }
 
 /* =========================================================================
@@ -145,6 +146,33 @@ static gameState_t      cl_gameState;
 static snapshot_t       cl_snapshot;
 static int              cl_currentSnapshot;
 static int              cl_currentServerTime;
+
+/* =========================================================================
+ * Snapshot reception -- called from server (loopback fast path)
+ * ========================================================================= */
+
+void CL_SetSnapshot(int serverTime, int snapNum,
+                    const playerState_t *ps,
+                    const entityState_t *entities, int numEntities) {
+    cl_currentServerTime = serverTime;
+    cl_currentSnapshot = snapNum;
+
+    memset(&cl_snapshot, 0, sizeof(cl_snapshot));
+    cl_snapshot.serverTime = serverTime;
+
+    if (ps) {
+        cl_snapshot.ps = *ps;
+    }
+
+    if (entities && numEntities > 0) {
+        if (numEntities > MAX_ENTITIES_IN_SNAPSHOT) {
+            numEntities = MAX_ENTITIES_IN_SNAPSHOT;
+        }
+        memcpy(cl_snapshot.entities, entities,
+               numEntities * sizeof(entityState_t));
+        cl_snapshot.numEntities = numEntities;
+    }
+}
 
 static void CGI_GetGameState(gameState_t *gs) {
     if (gs) *gs = cl_gameState;

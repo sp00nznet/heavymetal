@@ -66,6 +66,11 @@ static gentity_t *SV_GentityNum(int num) {
     return (gentity_t *)((byte *)sv_gentities + num * sv_gentitySize);
 }
 
+playerState_t *SV_GetClientPlayerState(int clientNum) {
+    if (!sv_clients || clientNum < 0) return NULL;
+    return (playerState_t *)((byte *)sv_clients + clientNum * sv_clientSize);
+}
+
 /* =========================================================================
  * Entity linking
  * ========================================================================= */

@@ -110,6 +110,8 @@ set(SERVER_SOURCES
 # -----------------------------------------------------------------------------
 set(RENDERER_SOURCES
     src/renderer/r_main.c
+    src/renderer/r_gl.c
+    src/renderer/r_gl.h
     src/renderer/r_model.c
     src/renderer/r_bsp.c
     src/renderer/r_shader.c

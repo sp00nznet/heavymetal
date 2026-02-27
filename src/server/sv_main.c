@@ -335,8 +335,57 @@ void SV_Frame(int msec) {
 
     /* Build and send snapshots to clients */
     sv.snapCount++;
-    /* TODO: SV_SendClientSnapshots() -- for loopback, copy game state
-     * directly to client's snapshot buffer */
+    SV_SendClientSnapshots();
+}
+
+/* =========================================================================
+ * Snapshot building and transmission
+ *
+ * For single-player (loopback), we directly copy entity state into
+ * the client's snapshot buffer. This avoids the overhead of delta
+ * encoding through the network message system.
+ * ========================================================================= */
+
+/* Implemented in cl_cgame.c -- receives snapshot data from server */
+extern void CL_SetSnapshot(int serverTime, int snapNum,
+                           const playerState_t *ps,
+                           const entityState_t *entities, int numEntities);
+
+static void SV_SendClientSnapshots(void) {
+    game_export_t *ge = SV_GetGameExport();
+    if (!ge || !ge->gentities) return;
+
+    /* Only send to active local client */
+    if (!sv.clients[0].active) return;
+
+    /* Get player state for client 0 */
+    extern playerState_t *SV_GetClientPlayerState(int clientNum);
+    playerState_t ps;
+    memset(&ps, 0, sizeof(ps));
+    playerState_t *clientPS = SV_GetClientPlayerState(0);
+    if (clientPS) {
+        ps = *clientPS;
+    }
+
+    /* Collect visible entities */
+    entityState_t snapEntities[256];
+    int numSnapEntities = 0;
+
+    int numEnts = ge->num_entities;
+    if (numEnts > ge->max_entities) numEnts = ge->max_entities;
+
+    for (int i = 0; i < numEnts && numSnapEntities < 256; i++) {
+        gentity_t *ent = (gentity_t *)((byte *)ge->gentities + i * ge->gentitySize);
+        if (!ent->inuse) continue;
+        if (ent->svFlags & SVF_NOCLIENT) continue;
+
+        snapEntities[numSnapEntities] = ent->s;
+        snapEntities[numSnapEntities].number = i;
+        numSnapEntities++;
+    }
+
+    /* Push to client via direct function call (loopback fast path) */
+    CL_SetSnapshot(sv.time, sv.snapCount, &ps, snapEntities, numSnapEntities);
 }
 
 /* =========================================================================
@@ -349,6 +398,14 @@ int SV_GetServerTime(void) {
 
 qboolean SV_IsRunning(void) {
     return sv.state == SS_GAME;
+}
+
+/* Public wrapper for loopback client command dispatch */
+void SV_ExecuteClientCommandStr(int clientNum, const char *s) {
+    if (sv.state != SS_GAME) return;
+    if (clientNum < 0 || clientNum >= sv.numClients) return;
+    if (!sv.clients[clientNum].active) return;
+    SV_ExecuteClientCommand(&sv.clients[clientNum], s);
 }
 
 /* =========================================================================
