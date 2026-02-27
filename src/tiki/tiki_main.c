@@ -35,6 +35,9 @@ void TIKI_Init(void) {
     Com_Printf("TIKI model system initialized (max %d models)\n", MAX_TIKI_MODELS);
 }
 
+/* Declared in tiki_skel.c */
+extern void TIKI_FreeSkeletons(void);
+
 void TIKI_Shutdown(void) {
     if (!tiki_initialized) return;
 
@@ -47,6 +50,8 @@ void TIKI_Shutdown(void) {
             tiki_cache[i] = NULL;
         }
     }
+
+    TIKI_FreeSkeletons();
 
     tiki_count = 0;
     tiki_initialized = qfalse;
@@ -240,23 +245,30 @@ int TIKI_SurfaceFlags(dtiki_t handle, int num) {
 }
 
 /* =========================================================================
- * Tag (bone) queries -- requires skeleton binary data
+ * Tag (bone) queries -- backed by skeleton binary data
  * ========================================================================= */
 
+/* Declared in tiki_skel.c */
+extern int          TIKI_SkeletonNumBones(const char *skelname);
+extern int          TIKI_SkeletonBoneIndex(const char *skelname, const char *bonename);
+extern const char   *TIKI_SkeletonBoneName(const char *skelname, int boneindex);
+
 int TIKI_NumTags(dtiki_t handle) {
-    /* Tag count comes from .skb binary -- stub until skeleton loader exists */
-    (void)handle;
-    return 0;
+    tiki_model_t *m = TIKI_GetModel(handle);
+    if (!m || !m->skelmodel[0]) return 0;
+    return TIKI_SkeletonNumBones(m->skelmodel);
 }
 
 int TIKI_TagNumForName(dtiki_t handle, const char *name) {
-    (void)handle; (void)name;
-    return -1;
+    tiki_model_t *m = TIKI_GetModel(handle);
+    if (!m || !name || !m->skelmodel[0]) return -1;
+    return TIKI_SkeletonBoneIndex(m->skelmodel, name);
 }
 
 const char *TIKI_TagNameForNum(dtiki_t handle, int num) {
-    (void)handle; (void)num;
-    return "";
+    tiki_model_t *m = TIKI_GetModel(handle);
+    if (!m || !m->skelmodel[0]) return "";
+    return TIKI_SkeletonBoneName(m->skelmodel, num);
 }
 
 /* =========================================================================

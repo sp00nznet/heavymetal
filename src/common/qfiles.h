@@ -213,29 +213,220 @@ typedef struct {
 } dlightdef_t;
 
 /* =========================================================================
- * TIKI binary format idents
+ * TIKI binary format idents and constants
  * ========================================================================= */
 
-#define TIKI_IDENT          0x49 /* 'I' -- part of "TIKI" text header */
-#define TIKI_ANIM_IDENT     0x54414E20  /* "TAN " */
-#define TIKI_ANIM_VERSION   2
-#define TIKI_MAX_FRAMES     2048
-#define TIKI_MAX_TRIANGLES  4096
-#define TIKI_MAX_VERTS      1200
-#define TIKI_MAX_TAGS       16
+/* Non-skeletal (TAN) format */
+#define TIKI_IDENT              (('T') | ('I' << 8) | ('K' << 16) | ('I' << 24))
+#define TIKI_ANIM_IDENT         (('T') | ('A' << 8) | ('N' << 16) | (' ' << 24))
+#define TIKI_ANIM_VERSION       2
+
+/* Skeletal format (.skb / .ska) */
+#define TIKI_SKEL_IDENT         (('S') | ('K' << 8) | ('L' << 16) | (' ' << 24))
+#define TIKI_SKEL_ANIM_IDENT    (('S') | ('K' << 8) | ('A' << 16) | ('N' << 24))
+#define TIKI_SKEL_VERSION       3
+#define TIKI_SKEL_MAXBONES      100
+#define MAX_SKEL_MODELS         20
+#define TIKI_BONE_CACHE         (TIKI_SKEL_MAXBONES * MAX_SKEL_MODELS)
+
+/* Limits */
+#define TIKI_MAX_FRAMES         2048
+#define TIKI_MAX_TRIANGLES      4096
+#define TIKI_MAX_VERTS          1200
+#define TIKI_MAX_TAGS           16
+
+/* Animation type flags */
+#define TIKI_ANIM_NORMAL        0
+#define TIKI_ANIM_NO_OFFSETS    1
+
+/* Bone flags */
+#define TIKI_SKEL_PARENTBONE    (-1)
+#define TIKI_BONEFLAG_LEG       1
+
+/* Bone compression constants (for .ska frame data) */
+#define TIKI_BONE_OFFSET_MANTISSA_BITS          9
+#define TIKI_BONE_OFFSET_MAX_SIGNED_VALUE       ((1 << TIKI_BONE_OFFSET_MANTISSA_BITS) - 1)
+#define TIKI_BONE_OFFSET_SIGNED_SHIFT           (15 - TIKI_BONE_OFFSET_MANTISSA_BITS)
+#define TIKI_BONE_OFFSET_MULTIPLIER             ((1 << TIKI_BONE_OFFSET_SIGNED_SHIFT) - 1)
+#define TIKI_BONE_OFFSET_MULTIPLIER_RECIPROCAL  (1.0f / TIKI_BONE_OFFSET_MULTIPLIER)
+
+#define TIKI_BONE_QUAT_FRACTIONAL_BITS          15
+#define TIKI_BONE_QUAT_MULTIPLIER               ((1 << TIKI_BONE_QUAT_FRACTIONAL_BITS) - 1)
+#define TIKI_BONE_QUAT_MULTIPLIER_RECIPROCAL    (1.0f / TIKI_BONE_QUAT_MULTIPLIER)
 
 /* =========================================================================
- * Skeletal model binary structures (.skb files)
+ * .SKB file -- Skeletal model (mesh + bones + surfaces)
+ *
+ * File layout:
+ *   skelHeader_t
+ *   skelBoneName_t[numbones]     @ ofsBones
+ *   skelSurface_t (linked)       @ ofsSurfaces
+ *     skelTriangle_t[numTriangles]
+ *     skelVertex_t[numVerts]     (variable size due to weights)
+ *     int collapse[numVerts]     (LOD collapse map)
  * ========================================================================= */
 
 typedef struct {
-    vec3_t  bounds[2];          /* frame AABB */
-    vec3_t  scale;              /* multiply by this */
-    vec3_t  offset;             /* and add by this */
-    vec3_t  delta;              /* movement delta */
+    int     ident;                      /* TIKI_SKEL_IDENT ("SKL ") */
+    int     version;                    /* TIKI_SKEL_VERSION (3) */
+    char    name[MAX_QPATH];
+
+    int     numSurfaces;
+    int     numBones;
+
+    int     ofsBones;                   /* -> skelBoneName_t[numBones] */
+    int     ofsSurfaces;                /* -> first skelSurface_t */
+    int     ofsEnd;
+} skelHeader_t;
+
+typedef struct {
+    int     parent;                     /* parent bone index (-1 for root) */
+    int     flags;                      /* TIKI_BONEFLAG_* */
+    char    name[MAX_QPATH];
+} skelBoneName_t;
+
+typedef struct {
+    int     boneIndex;
+    float   boneWeight;
+    vec3_t  offset;                     /* per-bone vertex offset */
+} skelWeight_t;
+
+typedef struct {
+    vec3_t      normal;
+    vec2_t      texCoords;
+    int         numWeights;
+    skelWeight_t weights[1];            /* variable sized */
+} skelVertex_t;
+
+typedef struct {
+    int     indexes[3];
+} skelTriangle_t;
+
+typedef struct {
+    int     ident;                      /* TIKI_SKEL_IDENT */
+    char    name[MAX_QPATH];
+
+    int     numTriangles;
+    int     numVerts;
+    int     minLod;
+
+    int     ofsTriangles;               /* -> skelTriangle_t[numTriangles] */
+    int     ofsVerts;                   /* -> skelVertex_t[numVerts] (variable) */
+    int     ofsCollapse;                /* -> int[numVerts] (LOD collapse map) */
+    int     ofsEnd;                     /* next surface follows */
+} skelSurface_t;
+
+/* In-memory bone transform cache */
+typedef struct {
+    float   quat[4];                    /* quaternion rotation */
+    float   offset[3];                  /* translation */
+    float   matrix[3][3];              /* derived rotation matrix */
+} skelBoneCache_t;
+
+/* =========================================================================
+ * .SKA file -- Skeletal animation
+ *
+ * File layout:
+ *   skelAnimHeader_t
+ *   skelAnimFrame_t[numFrames]   @ ofsFrames
+ *     Each frame: bounds, radius, delta, then skelBone_t[numbones]
+ * ========================================================================= */
+
+typedef struct {
+    int     ident;                      /* TIKI_SKEL_ANIM_IDENT ("SKAN") */
+    int     version;                    /* TIKI_SKEL_VERSION (3) */
+    char    name[MAX_QPATH];
+
+    int     type;                       /* TIKI_ANIM_NORMAL or NO_OFFSETS */
+    int     numFrames;
+    int     numBones;
+    float   totalTime;
+    float   frameTime;                  /* 1.0 / framerate */
+    vec3_t  totalDelta;                 /* total root motion across animation */
+    int     ofsFrames;                  /* -> first skelAnimFrame_t */
+} skelAnimHeader_t;
+
+/* Compressed bone data in animation frames */
+typedef struct {
+    short   shortQuat[4];               /* quaternion * QUAT_MULTIPLIER */
+    short   shortOffset[3];             /* offset (compressed) */
+    short   padding;                    /* alignment padding */
+} skelBone_t;
+
+/* Single animation frame (variable sized) */
+typedef struct {
+    vec3_t      bounds[2];              /* frame AABB */
+    float       radius;                 /* bounding sphere */
+    vec3_t      delta;                  /* frame root motion delta */
+    skelBone_t  bones[1];              /* [numBones] compressed bone data */
+} skelAnimFrame_t;
+
+/* =========================================================================
+ * .TAN file -- Non-skeletal (traditional) animation
+ *
+ * Used for simple props and items that don't need a skeleton.
+ * Contains vertex morph targets per frame.
+ * ========================================================================= */
+
+typedef struct {
+    int     ident;                      /* TIKI_ANIM_IDENT ("TAN ") */
+    int     version;                    /* TIKI_ANIM_VERSION (2) */
+    char    name[MAX_QPATH];
+
+    int     numFrames;
+    int     numTags;
+    int     numSurfaces;
+    float   totalTime;
+    vec3_t  totalDelta;
+
+    int     ofsFrames;
+    int     ofsSurfaces;
+    int     ofsTags[TIKI_MAX_TAGS];
+    int     ofsEnd;
+} tikiHeader_t;
+
+/* TAN frame (non-skeletal) */
+typedef struct {
+    vec3_t  bounds[2];
+    vec3_t  scale;                      /* multiply compressed verts by this */
+    vec3_t  offset;                     /* then add this */
+    vec3_t  delta;
     float   radius;
     float   frametime;
 } tikiFrame_t;
+
+/* TAN surface */
+typedef struct {
+    int     ident;                      /* TIKI_SKEL_IDENT */
+    char    name[MAX_QPATH];
+
+    int     numFrames;
+    int     numVerts;
+    int     minLod;
+    int     numTriangles;
+
+    int     ofsTriangles;
+    int     ofsCollapseMap;
+    int     ofsSt;                      /* texture coords (shared all frames) */
+    int     ofsXyzNormals;              /* per-frame vertex positions */
+    int     ofsEnd;
+} tikiSurface_t;
+
+/* TAN compressed vertex */
+typedef struct {
+    unsigned short xyz[3];              /* compressed position */
+    short          normal;              /* compressed normal index */
+} tikiXyzNormal_t;
+
+/* Tag structures */
+typedef struct {
+    char    name[MAX_QPATH];
+} tikiTag_t;
+
+typedef struct {
+    vec3_t  origin;
+    vec3_t  axis[3];
+} tikiTagData_t;
 
 #ifdef __cplusplus
 }
