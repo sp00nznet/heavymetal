@@ -66,6 +66,8 @@ set(COMMON_SOURCES
     src/common/str.cpp
     src/common/pk3.h
     src/common/pk3.c
+    src/common/alias.h
+    src/common/alias.c
 )
 
 # -----------------------------------------------------------------------------
@@ -117,6 +119,14 @@ set(RENDERER_SOURCES
 )
 
 # -----------------------------------------------------------------------------
+# Collision model
+# -----------------------------------------------------------------------------
+set(COLLISION_SOURCES
+    src/collision/cm_local.h
+    src/collision/cm_main.c
+)
+
+# -----------------------------------------------------------------------------
 # Sound system (replacing Miles Sound System)
 # -----------------------------------------------------------------------------
 set(SOUND_SOURCES
@@ -161,6 +171,7 @@ add_executable(fakk2
     ${ENGINE_SOURCES}
     ${CLIENT_SOURCES}
     ${SERVER_SOURCES}
+    ${COLLISION_SOURCES}
     ${RENDERER_SOURCES}
     ${SOUND_SOURCES}
     ${TIKI_SOURCES}
@@ -173,6 +184,7 @@ target_include_directories(fakk2 PRIVATE
     src/engine
     src/client
     src/server
+    src/collision
     src/renderer
     src/sound
     src/tiki

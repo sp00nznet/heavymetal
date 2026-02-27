@@ -33,14 +33,44 @@ void    S_StartSound(const vec3_t origin, int entityNum, int channel,
                      sfxHandle_t sfx, float volume, float minDist, float pitch);
 void    S_StopSound(int entityNum, int channel);
 void    S_StartLocalSound(sfxHandle_t sfx, int channelNum);
+void    S_StartLocalSoundName(const char *sound_name);
+
+/* Looping sounds */
+void    S_ClearLoopingSounds(void);
+void    S_AddLoopingSound(const vec3_t origin, const vec3_t velocity,
+                          sfxHandle_t sfx, float volume, float minDist);
 
 /* Sound registration */
+void    S_BeginRegistration(void);
 sfxHandle_t S_RegisterSound(const char *name);
+void    S_EndRegistration(void);
+
+/* Entity update */
+void    S_UpdateEntity(int entityNum, const vec3_t origin, const vec3_t velocity,
+                       qboolean useListener);
+void    S_Respatialize(int entityNum, vec3_t origin, vec3_t axis[3]);
 
 /* Music system */
 void    S_StartMusic(const char *intro, const char *loop);
 void    S_StopMusic(void);
 void    S_SetMusicMood(int mood, float volume);
+
+/* FAKK2 music system interface (used by cgame import) */
+void    MUSIC_NewSoundtrack(const char *name);
+void    MUSIC_UpdateMood(int current_mood, int fallback_mood);
+void    MUSIC_UpdateVolume(float volume, float fade_time);
+
+/* Reverb and global volume */
+void    S_SetReverb(int reverb_type, float reverb_level);
+void    S_SetGlobalAmbientVolumeLevel(float volume);
+
+/* Lip sync (Babble system) */
+float   S_GetLipLength(const char *name);
+byte    *S_GetLipAmplitudes(const char *name, int *number_of_amplitudes);
+
+/* Sound queries for game DLL */
+float   S_SoundLength(const char *path);
+byte    *S_SoundAmplitudes(const char *name, int *number_of_amplitudes);
 
 /* Listener (camera/player position) */
 void    S_UpdateListener(const vec3_t origin, const vec3_t forward,

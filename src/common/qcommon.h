@@ -209,6 +209,10 @@ void    TIKI_Init(void);
 void    TIKI_Shutdown(void);
 void    TIKI_FlushAll(void);
 
+/* Collision model */
+void    CM_Init(void);
+void    CM_Shutdown(void);
+
 /* Renderer / BSP */
 void    R_Init(void);
 void    R_Shutdown(void);
@@ -217,6 +221,15 @@ void    R_FreeWorld(void);
 const char *R_GetEntityString(void);
 int     R_GetNumInlineModels(void);
 qboolean R_WorldLoaded(void);
+
+/* Alias system */
+void    Alias_Init(void);
+void    Alias_Shutdown(void);
+
+/* Sound system */
+void    S_Init(void);
+void    S_Shutdown(void);
+void    S_Update(void);
 
 /* Morpheus scripting */
 void    Script_Init(void);

@@ -13,6 +13,9 @@
 
 #include "../common/qcommon.h"
 #include "../common/g_public.h"
+#include "../common/alias.h"
+#include "../collision/cm_local.h"
+#include "../sound/snd_local.h"
 #include "../tiki/tiki.h"
 
 /* Global game interface pointers */
@@ -21,10 +24,46 @@ static game_export_t    *ge;    /* game -> engine */
 static void             *gameLib;
 
 /* =========================================================================
- * Stub implementations for game_import_t functions
- *
- * These bridge the engine's internal functions to the game_import_t
- * function pointer table format expected by the game DLL.
+ * External declarations from sv_world.c
+ * ========================================================================= */
+
+extern void SV_LocateGameData(gentity_t *gEnts, int numGEntities,
+                               int sizeofGEntity_t, playerState_t *clients,
+                               int sizeofGameClient);
+extern void SV_LinkEntity(gentity_t *ent);
+extern void SV_UnlinkEntity(gentity_t *ent);
+extern int  SV_AreaEntities(vec3_t mins, vec3_t maxs, int *list, int maxcount);
+extern void SV_ClipToEntity(trace_t *trace, const vec3_t start, const vec3_t mins,
+                             const vec3_t maxs, const vec3_t end, int entityNum,
+                             int contentmask);
+extern void SV_Trace(trace_t *result, const vec3_t start, const vec3_t mins,
+                      const vec3_t maxs, const vec3_t end, int passEntityNum,
+                      int contentmask, qboolean cylinder);
+extern int  SV_PointContents(const vec3_t p, int passEntityNum);
+extern void SV_SetBrushModel(gentity_t *ent, const char *name);
+extern void SV_SetConfigstring(int index, const char *val);
+extern char *SV_GetConfigstring(int index);
+extern void SV_SetUserinfo(int index, const char *val);
+extern void SV_GetUserinfo(int index, char *buffer, int bufferSize);
+extern void SV_SendServerCommand(int clientnum, const char *fmt, ...);
+extern int  SV_ModelIndex(const char *name);
+extern int  SV_SoundIndex(const char *name);
+extern int  SV_ImageIndex(const char *name);
+extern int  SV_ItemIndex(const char *name);
+extern const char *SV_GameDir(void);
+extern qboolean SV_IsModel(int index);
+extern void SV_SetModel(gentity_t *ent, const char *name);
+extern void SV_SetLightStyle(int i, const char *data);
+extern void SV_SetFarPlane(int farplane);
+extern void SV_SetSkyPortal(qboolean skyportal);
+extern void SV_DebugGraph(float value, int color);
+extern void SV_Centerprintf(gentity_t *ent, const char *fmt, ...);
+extern void SV_Locationprintf(gentity_t *ent, int x, int y, const char *fmt, ...);
+extern unsigned short SV_CalcCRC(const unsigned char *start, int count);
+extern const char *SV_GetArchiveFileName(const char *filename, const char *extension);
+
+/* =========================================================================
+ * Core stubs for game_import_t
  * ========================================================================= */
 
 static void GI_Printf(const char *fmt, ...) {
@@ -79,13 +118,7 @@ static char *GI_Argv(int n) { return Cmd_Argv(n); }
 static const char *GI_Args(void) { return Cmd_Args(); }
 
 static void GI_AddCommand(const char *cmd) {
-    /* Register a game command -- the engine will forward it to the game */
     Cmd_AddCommand(cmd, NULL);
-}
-
-static int GI_FS_ReadFile(const char *name, void **buf, qboolean quiet) {
-    (void)quiet;
-    return (int)FS_ReadFile(name, buf);
 }
 
 static void GI_SendConsoleCommand(const char *text) {
@@ -93,23 +126,63 @@ static void GI_SendConsoleCommand(const char *text) {
 }
 
 /* =========================================================================
- * TIKI wrappers for game_import_t
- *
- * The game DLL uses modelindex (int) as a TIKI handle. These wrappers
- * pass through to the TIKI system using dtiki_t (which is also int).
+ * Filesystem wrappers
  * ========================================================================= */
 
-static int GI_NumAnims(int modelindex) { return TIKI_NumAnims(modelindex); }
-static int GI_NumSkins(int modelindex) { (void)modelindex; return 1; }
-static int GI_NumSurfaces(int modelindex) { return TIKI_NumSurfaces(modelindex); }
-static int GI_NumTags(int modelindex) { return TIKI_NumTags(modelindex); }
-
-static qboolean GI_InitCommands(int modelindex, tiki_cmd_t *tiki_cmd) {
-    return TIKI_InitCommands(modelindex, tiki_cmd);
+static int GI_FS_ReadFile(const char *name, void **buf, qboolean quiet) {
+    (void)quiet;
+    return (int)FS_ReadFile(name, buf);
 }
 
-static void GI_CalculateBounds(int modelindex, float scale, vec3_t mins, vec3_t maxs) {
-    TIKI_CalculateBounds(modelindex, scale, mins, maxs);
+static fileHandle_t GI_FS_FOpenFileWrite(const char *qpath) {
+    fileHandle_t f;
+    FS_FOpenFileWrite(qpath, &f);
+    return f;
+}
+
+static fileHandle_t GI_FS_FOpenFileAppend(const char *filename) {
+    /* TODO: Append mode not yet implemented, fall back to write */
+    fileHandle_t f;
+    FS_FOpenFileWrite(filename, &f);
+    return f;
+}
+
+static char *GI_FS_PrepFileWrite(const char *filename) {
+    /* Returns the OS path for writing -- used for save files */
+    static char path[MAX_OSPATH];
+    snprintf(path, sizeof(path), "%s/%s", FAKK_GAME_DIR, filename);
+    return path;
+}
+
+/* =========================================================================
+ * Sound wrappers for game_import_t
+ * ========================================================================= */
+
+static void GI_Sound(vec3_t *org, int entnum, int channel, const char *sound_name,
+                     float volume, float attenuation) {
+    sfxHandle_t sfx = S_RegisterSound(sound_name);
+    S_StartSound(org ? *org : NULL, entnum, channel, sfx, volume, attenuation, 1.0f);
+}
+
+static void GI_StopSound(int entnum, int channel) {
+    S_StopSound(entnum, channel);
+}
+
+/* =========================================================================
+ * TIKI wrappers for game_import_t
+ * ========================================================================= */
+
+static int GI_NumAnims(int mi) { return TIKI_NumAnims(mi); }
+static int GI_NumSkins(int mi) { (void)mi; return 1; }
+static int GI_NumSurfaces(int mi) { return TIKI_NumSurfaces(mi); }
+static int GI_NumTags(int mi) { return TIKI_NumTags(mi); }
+
+static qboolean GI_InitCommands(int mi, tiki_cmd_t *tc) {
+    return TIKI_InitCommands(mi, tc);
+}
+
+static void GI_CalculateBounds(int mi, float scale, vec3_t mins, vec3_t maxs) {
+    TIKI_CalculateBounds(mi, scale, mins, maxs);
 }
 
 static const char *GI_Anim_NameForNum(int mi, int an) { return TIKI_AnimName(mi, an); }
@@ -160,39 +233,109 @@ static orientation_t GI_Tag_Orientation(int mi, int an, int fr, int num,
 static const char *GI_NameForNum(int mi) { return TIKI_NameForNum(mi); }
 
 /* =========================================================================
- * Fill the game_import_t structure
+ * Collision wrappers
+ * ========================================================================= */
+
+static void GI_AdjustAreaPortalState(gentity_t *ent, qboolean open) {
+    /* The game passes an entity; we need its area for the CM function */
+    if (!ent) return;
+    /* Use entity's area number for both sides of the portal */
+    CM_AdjustAreaPortalState(ent->areanum, ent->areanum, open);
+}
+
+/* =========================================================================
+ * Debug lines
+ * ========================================================================= */
+
+#define MAX_DEBUG_LINES 256
+static debugline_t  debug_lines[MAX_DEBUG_LINES];
+static int          num_debug_lines;
+static debugline_t  *debug_lines_ptr = debug_lines;
+
+/* =========================================================================
+ * Fill the game_import_t structure -- ALL function pointers
  * ========================================================================= */
 
 static void SV_InitGameImport(void) {
     memset(&gi, 0, sizeof(gi));
 
-    /* Core */
+    /* --- Printing --- */
     gi.Printf = GI_Printf;
     gi.DPrintf = GI_DPrintf;
     gi.DebugPrintf = GI_DPrintf;
     gi.Error = GI_Error;
+
+    /* --- Timing --- */
     gi.Milliseconds = GI_Milliseconds;
+
+    /* --- Memory --- */
     gi.Malloc = GI_Malloc;
     gi.Free = GI_Free;
 
-    /* CVars */
+    /* --- CVars --- */
     gi.cvar = GI_Cvar;
     gi.cvar_set = GI_CvarSet;
 
-    /* Commands */
+    /* --- Commands --- */
     gi.argc = GI_Argc;
     gi.argv = GI_Argv;
     gi.args = GI_Args;
     gi.AddCommand = GI_AddCommand;
 
-    /* Filesystem */
+    /* --- Filesystem --- */
     gi.FS_ReadFile = GI_FS_ReadFile;
     gi.FS_FreeFile = FS_FreeFile;
-    /* TODO: Fill in remaining FS functions */
+    gi.FS_WriteFile = FS_WriteFile;
+    gi.FS_FOpenFileWrite = GI_FS_FOpenFileWrite;
+    gi.FS_FOpenFileAppend = GI_FS_FOpenFileAppend;
+    gi.FS_PrepFileWrite = GI_FS_PrepFileWrite;
+    gi.FS_Write = FS_Write;
+    gi.FS_Read = FS_Read;
+    gi.FS_FCloseFile = FS_FCloseFile;
+    gi.FS_FTell = FS_FTell;
+    gi.FS_FSeek = FS_Seek;
+    gi.FS_Flush = FS_Flush;
 
+    gi.GetArchiveFileName = SV_GetArchiveFileName;
     gi.SendConsoleCommand = GI_SendConsoleCommand;
+    gi.DebugGraph = SV_DebugGraph;
 
-    /* TIKI model queries */
+    /* --- Server --- */
+    gi.SendServerCommand = SV_SendServerCommand;
+    gi.setConfigstring = SV_SetConfigstring;
+    gi.getConfigstring = SV_GetConfigstring;
+    gi.setUserinfo = SV_SetUserinfo;
+    gi.getUserinfo = SV_GetUserinfo;
+
+    /* --- Collision --- */
+    gi.SetBrushModel = SV_SetBrushModel;
+    gi.trace = SV_Trace;
+    gi.pointcontents = SV_PointContents;
+    gi.pointbrushnum = SV_PointContents;   /* same as pointcontents for now */
+    gi.inPVS = CM_InPVS;
+    gi.inPVSIgnorePortals = CM_InPVSIgnorePortals;
+    gi.AdjustAreaPortalState = GI_AdjustAreaPortalState;
+    gi.AreasConnected = CM_AreasConnected;
+
+    /* --- Entity linking --- */
+    gi.linkentity = SV_LinkEntity;
+    gi.unlinkentity = SV_UnlinkEntity;
+    gi.AreaEntities = SV_AreaEntities;
+    gi.ClipToEntity = SV_ClipToEntity;
+
+    /* --- Resource indexing --- */
+    gi.imageindex = SV_ImageIndex;
+    gi.itemindex = SV_ItemIndex;
+    gi.soundindex = SV_SoundIndex;
+    gi.modelindex = SV_ModelIndex;
+
+    /* --- Rendering --- */
+    gi.SetLightStyle = SV_SetLightStyle;
+    gi.GameDir = SV_GameDir;
+    gi.IsModel = SV_IsModel;
+    gi.setmodel = SV_SetModel;
+
+    /* --- TIKI model queries --- */
     gi.NumAnims = GI_NumAnims;
     gi.NumSkins = GI_NumSkins;
     gi.NumSurfaces = GI_NumSurfaces;
@@ -200,7 +343,7 @@ static void SV_InitGameImport(void) {
     gi.InitCommands = GI_InitCommands;
     gi.CalculateBounds = GI_CalculateBounds;
 
-    /* Animation queries */
+    /* --- Animation queries --- */
     gi.Anim_NameForNum = GI_Anim_NameForNum;
     gi.Anim_NumForName = GI_Anim_NumForName;
     gi.Anim_Random = GI_Anim_Random;
@@ -211,34 +354,66 @@ static void SV_InitGameImport(void) {
     gi.Anim_Flags = GI_Anim_Flags;
     gi.Anim_HasCommands = GI_Anim_HasCommands;
 
-    /* Frame queries */
+    /* --- Frame queries --- */
     gi.Frame_Commands = GI_Frame_Commands;
     gi.Frame_Delta = GI_Frame_Delta;
     gi.Frame_Time = GI_Frame_Time;
     gi.Frame_Bounds = GI_Frame_Bounds;
 
-    /* Surface queries */
+    /* --- Surface queries --- */
     gi.Surface_NameToNum = GI_Surface_NameToNum;
     gi.Surface_NumToName = GI_Surface_NumToName;
     gi.Surface_Flags = GI_Surface_Flags;
     gi.Surface_NumSkins = GI_Surface_NumSkins;
 
-    /* Tag (bone) queries */
+    /* --- Tag (bone) queries --- */
     gi.Tag_NumForName = GI_Tag_NumForName;
     gi.Tag_NameForNum = GI_Tag_NameForNum;
     gi.Tag_Orientation = GI_Tag_Orientation;
 
+    /* --- Alias system --- */
+    gi.Alias_Add = Alias_ModelAdd;
+    gi.Alias_FindRandom = Alias_ModelFindRandom;
+    gi.Alias_Dump = Alias_ModelDump;
+    gi.Alias_Clear = Alias_ModelClear;
+    gi.Alias_FindDialog = Alias_ModelFindDialog;
+    gi.Alias_GetList = Alias_ModelGetList;
+    gi.Alias_UpdateDialog = Alias_ModelUpdateDialog;
+    gi.Alias_AddActorDialog = Alias_ModelAddActorDialog;
+
     gi.NameForNum = GI_NameForNum;
 
-    /* TODO: Fill in remaining game_import_t functions:
-     *   - Collision (trace, pointcontents, linkentity, etc.)
-     *   - Config strings
-     *   - Sound
-     *   - Alias system
-     *   - Debug lines
-     */
+    /* --- Global alias system --- */
+    gi.GlobalAlias_Add = Alias_GlobalAdd;
+    gi.GlobalAlias_FindRandom = Alias_GlobalFindRandom;
+    gi.GlobalAlias_Dump = Alias_GlobalDump;
+    gi.GlobalAlias_Clear = Alias_GlobalClear;
 
-    Com_Printf("SV_InitGameImport: %d function pointers populated\n",
+    /* --- Screen printing --- */
+    gi.centerprintf = SV_Centerprintf;
+    gi.locationprintf = SV_Locationprintf;
+
+    /* --- Sound --- */
+    gi.Sound = GI_Sound;
+    gi.StopSound = GI_StopSound;
+    gi.SoundLength = S_SoundLength;
+    gi.SoundAmplitudes = S_SoundAmplitudes;
+
+    /* --- CRC --- */
+    gi.CalcCRC = SV_CalcCRC;
+
+    /* --- Debug --- */
+    gi.DebugLines = &debug_lines_ptr;
+    gi.numDebugLines = &num_debug_lines;
+
+    /* --- Entity management --- */
+    gi.LocateGameData = SV_LocateGameData;
+
+    /* --- Rendering control --- */
+    gi.SetFarPlane = SV_SetFarPlane;
+    gi.SetSkyPortal = SV_SetSkyPortal;
+
+    Com_Printf("SV_InitGameImport: all %d function pointers populated\n",
                (int)(sizeof(gi) / sizeof(void *)));
 }
 
@@ -259,7 +434,6 @@ void SV_InitGameProgs(void) {
 
     gameLib = Sys_LoadDll(dllpath);
     if (!gameLib) {
-        /* Try alternate path */
         snprintf(dllpath, sizeof(dllpath), "gamex86.dll");
         gameLib = Sys_LoadDll(dllpath);
     }
