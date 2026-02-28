@@ -81,7 +81,8 @@ void R_DrawPlanarSurface(const dsurface_t *surf, const drawVert_t *verts,
     for (int i = 0; i < surf->numIndexes; i++) {
         const drawVert_t *v = &surfVerts[surfIndexes[i]];
         glColor4ubv(v->color);
-        glTexCoord2fv(v->st);
+        glMultiTexCoord2fv(GL_TEXTURE0, v->st);
+        glMultiTexCoord2fv(GL_TEXTURE1, v->lightmap);
         glNormal3fv(v->normal);
         glVertex3fv(v->xyz);
     }
@@ -211,12 +212,14 @@ void R_DrawPatchSurface(const dsurface_t *surf, const drawVert_t *verts,
                     drawVert_t *v0 = &tessVerts[ty][tx];
                     drawVert_t *v1 = &tessVerts[ty+1][tx];
 
-                    glTexCoord2fv(v0->st);
+                    glMultiTexCoord2fv(GL_TEXTURE0, v0->st);
+                    glMultiTexCoord2fv(GL_TEXTURE1, v0->lightmap);
                     glColor4ubv(v0->color);
                     glNormal3fv(v0->normal);
                     glVertex3fv(v0->xyz);
 
-                    glTexCoord2fv(v1->st);
+                    glMultiTexCoord2fv(GL_TEXTURE0, v1->st);
+                    glMultiTexCoord2fv(GL_TEXTURE1, v1->lightmap);
                     glColor4ubv(v1->color);
                     glNormal3fv(v1->normal);
                     glVertex3fv(v1->xyz);
@@ -266,7 +269,8 @@ void R_DrawTerrainSurface(const dsurface_t *surf, const drawVert_t *verts,
     for (int i = 0; i < surf->numIndexes; i++) {
         const drawVert_t *v = &surfVerts[surfIndexes[i]];
         glColor4ubv(v->color);
-        glTexCoord2fv(v->st);
+        glMultiTexCoord2fv(GL_TEXTURE0, v->st);
+        glMultiTexCoord2fv(GL_TEXTURE1, v->lightmap);
         glNormal3fv(v->normal);
         glVertex3fv(v->xyz);
     }
@@ -588,6 +592,21 @@ void R_DrawWorldSurfaces(void) {
     /* Default white color for unlit surfaces */
     glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 
+    /* Shader lookup struct matching r_shader.c layout */
+    extern void *R_GetShaderByHandle(int h);
+    typedef struct {
+        char name[MAX_QPATH]; int index; int sortOrder;
+        qboolean defaultShader, isSky, isPortal;
+        int cullType; qboolean polygonOffset;
+        int surfaceFlags, contentFlags, numStages;
+        struct { qboolean active; qhandle_t image; char imageName[MAX_QPATH]; qboolean isLightmap; } stages[8];
+    } surfShaderRef_t;
+
+    extern GLuint R_GetLightmapTexture(int index);
+
+    int lastBoundShader = -1;
+    int lastBoundLightmap = -1;
+
     for (int i = 0; i < numSurfs; i++) {
         int surfIdx = firstSurf + i;
         if (surfIdx < 0 || surfIdx >= world->numSurfaces) continue;
@@ -602,6 +621,34 @@ void R_DrawWorldSurfaces(void) {
         if (surf->shaderNum >= 0 && surf->shaderNum < world->numShaders) {
             if (world->shaders[surf->shaderNum].surfaceFlags & SURF_NODRAW) {
                 continue;
+            }
+        }
+
+        /* Bind per-surface diffuse texture from shader */
+        if (surf->shaderNum != lastBoundShader) {
+            lastBoundShader = surf->shaderNum;
+            surfShaderRef_t *sh = (surfShaderRef_t *)R_GetShaderByHandle(surf->shaderNum);
+            if (sh && sh->numStages > 0 && sh->stages[0].image > 0) {
+                glActiveTexture(GL_TEXTURE0);
+                glEnable(GL_TEXTURE_2D);
+                glBindTexture(GL_TEXTURE_2D, sh->stages[0].image);
+            }
+        }
+
+        /* Bind per-surface lightmap to texture unit 1 */
+        if (surf->lightmapNum != lastBoundLightmap) {
+            lastBoundLightmap = surf->lightmapNum;
+            GLuint lmTex = R_GetLightmapTexture(surf->lightmapNum);
+            if (lmTex > 0) {
+                glActiveTexture(GL_TEXTURE1);
+                glEnable(GL_TEXTURE_2D);
+                glBindTexture(GL_TEXTURE_2D, lmTex);
+                glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+                glActiveTexture(GL_TEXTURE0);
+            } else {
+                glActiveTexture(GL_TEXTURE1);
+                glDisable(GL_TEXTURE_2D);
+                glActiveTexture(GL_TEXTURE0);
             }
         }
 
@@ -626,6 +673,11 @@ void R_DrawWorldSurfaces(void) {
                 break;
         }
     }
+
+    /* Disable lightmap texture unit after world rendering */
+    glActiveTexture(GL_TEXTURE1);
+    glDisable(GL_TEXTURE_2D);
+    glActiveTexture(GL_TEXTURE0);
 }
 
 /* =========================================================================

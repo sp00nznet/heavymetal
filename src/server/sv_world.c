@@ -92,7 +92,7 @@ void SV_LinkEntity(gentity_t *ent) {
         /* absmin/absmax already set from SetBrushModel */
     }
 
-    /* Determine area */
+    /* Determine area(s) -- portals can span two areas */
     ent->areanum = CM_LeafArea(CM_PointLeafnum(ent->currentOrigin));
 
     /* Register in world entity list */

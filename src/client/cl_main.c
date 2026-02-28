@@ -498,9 +498,13 @@ void CL_Frame(int msec) {
             if (cls.viewangles[PITCH] < -89.0f) cls.viewangles[PITCH] = -89.0f;
         }
 
-        /* Send to server (loopback fast path -- directly write to client struct) */
-        extern void SV_ExecuteClientCommandStr(int clientNum, const char *s);
-        /* The server reads usercmd via ClientThink in SV_Frame */
+        /* Send usercmd to server (loopback fast path -- directly write to client struct) */
+        cmd.angles[PITCH] = (int)(cls.viewangles[PITCH] * 65536.0f / 360.0f);
+        cmd.angles[YAW]   = (int)(cls.viewangles[YAW]   * 65536.0f / 360.0f);
+        cmd.angles[ROLL]  = 0;
+
+        extern void SV_ClientUsercmd(int clientNum, const usercmd_t *cmd);
+        SV_ClientUsercmd(0, &cmd);
     }
 
     /* Update sound */

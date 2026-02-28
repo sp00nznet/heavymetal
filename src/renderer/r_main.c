@@ -287,7 +287,27 @@ void R_RenderScene(const refdef_t *fd) {
 
         for (int pi = 0; pi < scene_numPolys; pi++) {
             scenePoly_t *poly = &scene_polys[pi];
-            /* TODO: Bind poly->shader texture when shader system is complete */
+
+            /* Bind the shader's first-stage texture */
+            if (poly->shader > 0) {
+                extern void *R_GetShaderByHandle(int h);
+                typedef struct {
+                    char name[MAX_QPATH]; int index; int sortOrder;
+                    qboolean defaultShader, isSky, isPortal;
+                    int cullType; qboolean polygonOffset;
+                    int surfaceFlags, contentFlags, numStages;
+                    struct { qboolean active; qhandle_t image; } stages[8];
+                } polyShaderRef_t;
+                polyShaderRef_t *sh = (polyShaderRef_t *)R_GetShaderByHandle(poly->shader);
+                if (sh && sh->numStages > 0 && sh->stages[0].image > 0) {
+                    glEnable(GL_TEXTURE_2D);
+                    glBindTexture(GL_TEXTURE_2D, sh->stages[0].image);
+                } else {
+                    glDisable(GL_TEXTURE_2D);
+                }
+            } else {
+                glDisable(GL_TEXTURE_2D);
+            }
 
             glBegin(GL_TRIANGLE_FAN);
             for (int vi = 0; vi < poly->numVerts; vi++) {
@@ -566,8 +586,26 @@ void R_SwipeEnd(void) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDepthMask(GL_FALSE);
     glDisable(GL_CULL_FACE);
-    glDisable(GL_TEXTURE_2D);
-    /* TODO: Bind swipe.shader when shader system is complete */
+    /* Bind swipe shader texture */
+    if (swipe.shader > 0) {
+        extern void *R_GetShaderByHandle(int h);
+        typedef struct {
+            char name[MAX_QPATH]; int index; int sortOrder;
+            qboolean defaultShader, isSky, isPortal;
+            int cullType; qboolean polygonOffset;
+            int surfaceFlags, contentFlags, numStages;
+            struct { qboolean active; qhandle_t image; } stages[8];
+        } swipeShaderRef_t;
+        swipeShaderRef_t *sh = (swipeShaderRef_t *)R_GetShaderByHandle(swipe.shader);
+        if (sh && sh->numStages > 0 && sh->stages[0].image > 0) {
+            glEnable(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D, sh->stages[0].image);
+        } else {
+            glDisable(GL_TEXTURE_2D);
+        }
+    } else {
+        glDisable(GL_TEXTURE_2D);
+    }
 
     glBegin(GL_TRIANGLE_STRIP);
     for (int i = 0; i < swipe.numPoints; i++) {

@@ -66,7 +66,7 @@ static void Ghost_RandomDirection(vec3_t dir, const vec3_t baseDir, float spread
     float sinPhi = sinf(phi);
     dir[0] = baseDir[0] + sinPhi * cosf(theta);
     dir[1] = baseDir[1] + sinPhi * sinf(theta);
-    dir[2] = baseDir[2] + cosf(phi) - 1.0f + baseDir[2];
+    dir[2] = baseDir[2] + cosf(phi) - 1.0f;
     VectorNormalize(dir);
 }
 

@@ -237,10 +237,21 @@ static const char *GI_NameForNum(int mi) { return TIKI_NameForNum(mi); }
  * ========================================================================= */
 
 static void GI_AdjustAreaPortalState(gentity_t *ent, qboolean open) {
-    /* The game passes an entity; we need its area for the CM function */
     if (!ent) return;
-    /* Use entity's area number for both sides of the portal */
-    CM_AdjustAreaPortalState(ent->areanum, ent->areanum, open);
+
+    /* A portal entity spans two areas. Probe the min and max corners
+     * of its bounding box to find the two distinct areas it connects. */
+    int area1 = CM_LeafArea(CM_PointLeafnum(ent->absmin));
+    int area2 = CM_LeafArea(CM_PointLeafnum(ent->absmax));
+
+    if (area1 == area2) {
+        /* Try opposite corners for a better chance of crossing the portal */
+        vec3_t probe;
+        probe[0] = ent->absmax[0]; probe[1] = ent->absmin[1]; probe[2] = ent->absmin[2];
+        area2 = CM_LeafArea(CM_PointLeafnum(probe));
+    }
+
+    CM_AdjustAreaPortalState(area1, area2, open);
 }
 
 /* =========================================================================

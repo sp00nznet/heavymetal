@@ -528,10 +528,14 @@ void SND_SetVolume(float master, float music) {
 
 void SND_ClearLoopingSounds(void) {
     for (int i = 0; i < MAX_SOUND_CHANNELS; i++) {
-        if (snd_channels[i].active && snd_channels[i].looping) {
-            /* Mark for potential removal -- if not re-added this frame,
-             * the channel will be deactivated during the next clear. */
-            snd_channels[i].looping = 2;  /* 2 = pending removal */
+        if (!snd_channels[i].active) continue;
+        if (snd_channels[i].looping == 2) {
+            /* Was pending removal and not re-added last frame -- kill it */
+            snd_channels[i].active = qfalse;
+        } else if (snd_channels[i].looping == 1) {
+            /* Mark for potential removal -- if S_AddLoopingSound re-adds
+             * this sound later this frame, it'll be set back to 1. */
+            snd_channels[i].looping = 2;
         }
     }
 }

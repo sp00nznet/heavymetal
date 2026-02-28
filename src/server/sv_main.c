@@ -580,6 +580,15 @@ qboolean SV_IsRunning(void) {
     return sv.state == SS_GAME;
 }
 
+/* Store a usercmd from the client -- used by loopback path */
+void SV_ClientUsercmd(int clientNum, const usercmd_t *cmd) {
+    if (sv.state != SS_GAME) return;
+    if (clientNum < 0 || clientNum >= sv.numClients) return;
+    if (!sv.clients[clientNum].active) return;
+    if (!cmd) return;
+    sv.clients[clientNum].lastUsercmd = *cmd;
+}
+
 /* Public wrapper for loopback client command dispatch */
 void SV_ExecuteClientCommandStr(int clientNum, const char *s) {
     if (sv.state != SS_GAME) return;

@@ -86,7 +86,7 @@ void S_AddLoopingSound(const vec3_t origin, const vec3_t velocity,
                        sfxHandle_t sfx, float volume, float minDist) {
     if (!snd_initialized) return;
     (void)velocity; /* velocity-based doppler not yet implemented */
-    SND_AddLoopingSound(origin, sfx, volume, minDist);
+    SND_AddLoopingSound(origin, sfx, volume * s_ambientVolume, minDist);
 }
 
 /* =========================================================================

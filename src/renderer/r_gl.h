@@ -19,6 +19,14 @@
 #include <GL/gl.h>
 #endif
 
+/* GL 1.3 multitexture constants (may not be in GL/gl.h on Windows) */
+#ifndef GL_TEXTURE0
+#define GL_TEXTURE0     0x84C0
+#define GL_TEXTURE1     0x84C1
+#define GL_TEXTURE2     0x84C2
+#define GL_TEXTURE3     0x84C3
+#endif
+
 /* =========================================================================
  * Extension functions loaded at runtime
  *
@@ -30,6 +38,8 @@
 /* Multitexture (GL 1.3) */
 typedef void (APIENTRY *PFNGLACTIVETEXTUREPROC)(GLenum texture);
 typedef void (APIENTRY *PFNGLCLIENTACTIVETEXTUREPROC)(GLenum texture);
+typedef void (APIENTRY *PFNGLMULTITEXCOORD2FPROC)(GLenum target, GLfloat s, GLfloat t);
+typedef void (APIENTRY *PFNGLMULTITEXCOORD2FVPROC)(GLenum target, const GLfloat *v);
 
 /* VBO (GL 1.5) */
 typedef void (APIENTRY *PFNGLGENBUFFERSPROC)(GLsizei n, GLuint *buffers);
@@ -71,6 +81,13 @@ typedef void (APIENTRY *PFNGLVERTEXATTRIBPOINTERPROC)(GLuint index, GLint size, 
 
 extern PFNGLACTIVETEXTUREPROC           qglActiveTexture;
 extern PFNGLCLIENTACTIVETEXTUREPROC     qglClientActiveTexture;
+extern PFNGLMULTITEXCOORD2FPROC        qglMultiTexCoord2f;
+extern PFNGLMULTITEXCOORD2FVPROC       qglMultiTexCoord2fv;
+
+/* Convenience macros for GL 1.3+ multi-texture functions */
+#define glActiveTexture     qglActiveTexture
+#define glMultiTexCoord2f   qglMultiTexCoord2f
+#define glMultiTexCoord2fv  qglMultiTexCoord2fv
 extern PFNGLGENBUFFERSPROC              qglGenBuffers;
 extern PFNGLDELETEBUFFERSPROC           qglDeleteBuffers;
 extern PFNGLBINDBUFFERPROC              qglBindBuffer;

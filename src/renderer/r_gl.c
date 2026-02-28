@@ -22,6 +22,8 @@
 
 PFNGLACTIVETEXTUREPROC           qglActiveTexture;
 PFNGLCLIENTACTIVETEXTUREPROC     qglClientActiveTexture;
+PFNGLMULTITEXCOORD2FPROC        qglMultiTexCoord2f;
+PFNGLMULTITEXCOORD2FVPROC       qglMultiTexCoord2fv;
 PFNGLGENBUFFERSPROC              qglGenBuffers;
 PFNGLDELETEBUFFERSPROC           qglDeleteBuffers;
 PFNGLBINDBUFFERPROC              qglBindBuffer;
@@ -65,6 +67,8 @@ qboolean R_LoadGLFunctions(void) {
     /* Multitexture */
     LOAD_GL(qglActiveTexture, PFNGLACTIVETEXTUREPROC);
     LOAD_GL(qglClientActiveTexture, PFNGLCLIENTACTIVETEXTUREPROC);
+    LOAD_GL(qglMultiTexCoord2f, PFNGLMULTITEXCOORD2FPROC);
+    LOAD_GL(qglMultiTexCoord2fv, PFNGLMULTITEXCOORD2FVPROC);
 
     /* VBO */
     LOAD_GL(qglGenBuffers, PFNGLGENBUFFERSPROC);
