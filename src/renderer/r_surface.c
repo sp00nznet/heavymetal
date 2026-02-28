@@ -137,11 +137,28 @@ void R_DrawTriangleSoup(const dsurface_t *surf, const drawVert_t *verts,
 
 void R_DrawTerrainSurface(const dsurface_t *surf, const drawVert_t *verts,
                             const int *indexes) {
-    if (!surf || surf->numVerts == 0) return;
+    if (!surf || surf->numVerts == 0 || surf->numIndexes == 0) return;
 
-    /* TODO: Implement terrain LOD and rendering
-     * Terrain uses a heightfield-like approach with adaptive subdivision. */
-    R_DrawPlanarSurface(surf, verts, indexes);
+    /* FAKK2 terrain surfaces store a subdivision level per-surface.
+     * For distance-based LOD, we could skip every other index pair at
+     * far distances. For now, render the full mesh -- the BSP tree
+     * frustum culling already prevents rendering of off-screen terrain.
+     * A proper implementation would use the patchWidth/patchHeight grid
+     * with adaptive tessellation, but the indexed triangle approach
+     * matches what the engine does after initial subdivision. */
+    const drawVert_t *surfVerts = verts + surf->firstVert;
+    const int *surfIndexes = indexes + surf->firstIndex;
+
+    /* Use vertex colors for terrain blending (grass/rock/dirt transitions) */
+    glBegin(GL_TRIANGLES);
+    for (int i = 0; i < surf->numIndexes; i++) {
+        const drawVert_t *v = &surfVerts[surfIndexes[i]];
+        glColor4ubv(v->color);
+        glTexCoord2fv(v->st);
+        glNormal3fv(v->normal);
+        glVertex3fv(v->xyz);
+    }
+    glEnd();
 }
 
 /* =========================================================================

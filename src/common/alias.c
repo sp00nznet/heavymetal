@@ -201,8 +201,14 @@ const char *Alias_ModelFindDialog(int modelindex, const char *alias,
 }
 
 void *Alias_ModelGetList(int modelindex) {
-    (void)modelindex;
-    /* TODO: Return the alias list for serialization */
+    /* Returns the internal alias table pointer for the given model.
+     * The game DLL uses this for save/load serialization of alias state.
+     * We return the beginning of aliases for this model index. */
+    for (int i = 0; i < alias_count; i++) {
+        if (alias_entries[i].used && alias_entries[i].modelindex == modelindex) {
+            return &alias_entries[i];
+        }
+    }
     return NULL;
 }
 

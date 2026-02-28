@@ -366,7 +366,11 @@ void R_InitModels(void) {
 }
 
 void R_ShutdownModels(void) {
-    /* TODO: Free any GPU-side resources */
+    /* Clear model and skin caches.
+     * GPU resources (textures, VBOs) for models are owned by the shader
+     * and TIKI systems and freed during their respective shutdowns. */
     memset(r_models, 0, sizeof(r_models));
     r_numModels = 0;
+    memset(r_skins, 0, sizeof(r_skins));
+    r_numSkins = 0;
 }

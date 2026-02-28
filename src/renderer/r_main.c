@@ -427,13 +427,46 @@ void R_DrawBox(float x, float y, float w, float h) {
  * ========================================================================= */
 
 int R_GetShaderWidth(qhandle_t shader) {
-    (void)shader;
-    return 256; /* default */
+    if (shader <= 0) return 256;
+    /* Query the shader's first stage image dimensions via GL */
+    extern void *R_GetShaderByHandle(int h);
+    typedef struct {
+        char name[MAX_QPATH]; int index; int sortOrder;
+        qboolean defaultShader; qboolean isSky; qboolean isPortal;
+        int cullType; qboolean polygonOffset;
+        int surfaceFlags; int contentFlags;
+        int numStages;
+        struct { qboolean active; qhandle_t image; } stages[8];
+    } shaderRef2_t;
+    shaderRef2_t *sh = (shaderRef2_t *)R_GetShaderByHandle(shader);
+    if (sh && sh->numStages > 0 && sh->stages[0].image > 0) {
+        GLint w = 0;
+        glBindTexture(GL_TEXTURE_2D, sh->stages[0].image);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
+        if (w > 0) return w;
+    }
+    return 256;
 }
 
 int R_GetShaderHeight(qhandle_t shader) {
-    (void)shader;
-    return 256; /* default */
+    if (shader <= 0) return 256;
+    extern void *R_GetShaderByHandle(int h);
+    typedef struct {
+        char name[MAX_QPATH]; int index; int sortOrder;
+        qboolean defaultShader; qboolean isSky; qboolean isPortal;
+        int cullType; qboolean polygonOffset;
+        int surfaceFlags; int contentFlags;
+        int numStages;
+        struct { qboolean active; qhandle_t image; } stages[8];
+    } shaderRef3_t;
+    shaderRef3_t *sh = (shaderRef3_t *)R_GetShaderByHandle(shader);
+    if (sh && sh->numStages > 0 && sh->stages[0].image > 0) {
+        GLint h = 0;
+        glBindTexture(GL_TEXTURE_2D, sh->stages[0].image);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
+        if (h > 0) return h;
+    }
+    return 256;
 }
 
 /* =========================================================================
