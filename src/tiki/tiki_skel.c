@@ -453,6 +453,87 @@ qboolean TIKI_SkelAnimGetBoneTransform(const char *filename, int framenum,
 }
 
 /* =========================================================================
+ * Renderer helpers -- bone matrix palette and surface data access
+ * ========================================================================= */
+
+const byte *TIKI_GetSkelSurfaceData(const char *skelname, int *numSurfaces) {
+    skeleton_t *skel = TIKI_LoadSkeleton(skelname);
+    if (!skel || !skel->surfaceData) {
+        if (numSurfaces) *numSurfaces = 0;
+        return NULL;
+    }
+    if (numSurfaces) *numSurfaces = skel->numSurfaces;
+    return skel->surfaceData;
+}
+
+int TIKI_BuildBoneMatrices(const char *skelname, const char *animfile, int framenum,
+                            float boneMatrices[][3][4], int maxBones) {
+    skeleton_t *skel = TIKI_LoadSkeleton(skelname);
+    if (!skel) return 0;
+
+    int numBones = skel->numBones;
+    if (numBones > maxBones) numBones = maxBones;
+
+    /* Get animation frame data */
+    skelAnim_t *anim = NULL;
+    const skelAnimFrame_t *frame = NULL;
+    if (animfile && animfile[0]) {
+        anim = TIKI_LoadSkelAnim(animfile);
+        if (anim && anim->frameData) {
+            frame = TIKI_GetAnimFrame(anim, framenum);
+        }
+    }
+
+    for (int i = 0; i < numBones; i++) {
+        float quat[4], offset[3];
+
+        if (frame && anim && i < anim->numBones) {
+            TIKI_DecompressBone(&frame->bones[i], quat, offset);
+        } else {
+            /* Identity bind pose */
+            quat[0] = 0; quat[1] = 0; quat[2] = 0; quat[3] = 1;
+            offset[0] = 0; offset[1] = 0; offset[2] = 0;
+        }
+
+        /* Quaternion to 3x4 matrix (3x3 rotation + translation) */
+        float x = quat[0], y = quat[1], z = quat[2], w = quat[3];
+        float xx = x*x, yy = y*y, zz = z*z;
+        float xy = x*y, xz = x*z, yz = y*z;
+        float wx = w*x, wy = w*y, wz = w*z;
+
+        float local[3][4];
+        local[0][0] = 1 - 2*(yy + zz);
+        local[0][1] = 2*(xy - wz);
+        local[0][2] = 2*(xz + wy);
+        local[0][3] = offset[0];
+        local[1][0] = 2*(xy + wz);
+        local[1][1] = 1 - 2*(xx + zz);
+        local[1][2] = 2*(yz - wx);
+        local[1][3] = offset[1];
+        local[2][0] = 2*(xz - wy);
+        local[2][1] = 2*(yz + wx);
+        local[2][2] = 1 - 2*(xx + yy);
+        local[2][3] = offset[2];
+
+        /* Apply parent bone transform (hierarchy) */
+        int parent = skel->bones[i].parent;
+        if (parent >= 0 && parent < i) {
+            for (int r = 0; r < 3; r++) {
+                float *pm = boneMatrices[parent][r];
+                boneMatrices[i][r][0] = pm[0]*local[0][0] + pm[1]*local[1][0] + pm[2]*local[2][0];
+                boneMatrices[i][r][1] = pm[0]*local[0][1] + pm[1]*local[1][1] + pm[2]*local[2][1];
+                boneMatrices[i][r][2] = pm[0]*local[0][2] + pm[1]*local[1][2] + pm[2]*local[2][2];
+                boneMatrices[i][r][3] = pm[0]*local[0][3] + pm[1]*local[1][3] + pm[2]*local[2][3] + pm[3];
+            }
+        } else {
+            memcpy(boneMatrices[i], local, sizeof(local));
+        }
+    }
+
+    return numBones;
+}
+
+/* =========================================================================
  * Cleanup
  * ========================================================================= */
 

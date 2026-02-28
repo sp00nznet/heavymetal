@@ -26,6 +26,7 @@
 
 #include "../common/qcommon.h"
 #include "../common/qfiles.h"
+#include "../tiki/tiki.h"
 #include "tr_types.h"
 #include "r_gl.h"
 #include <string.h>
@@ -103,15 +104,126 @@ typedef struct {
     float       lodRadius;
 } patchSurface_t;
 
+/* =========================================================================
+ * Bezier patch tessellation
+ *
+ * BSP patches store a grid of control points (patchWidth x patchHeight).
+ * The grid is divided into 3x3 sub-patches, each evaluated as a
+ * biquadratic Bezier surface. The tessellation level determines how
+ * many intermediate vertices are generated between control points.
+ * ========================================================================= */
+
+#define PATCH_TESS_LEVEL 4  /* subdivisions per sub-patch edge */
+
+static float BezierBasis2(int idx, float t) {
+    /* Quadratic Bezier basis functions */
+    switch (idx) {
+        case 0: return (1-t)*(1-t);
+        case 1: return 2*t*(1-t);
+        case 2: return t*t;
+    }
+    return 0;
+}
+
 void R_DrawPatchSurface(const dsurface_t *surf, const drawVert_t *verts,
                          const int *indexes) {
     if (!surf || surf->numVerts == 0) return;
+    (void)indexes; /* patches use control point grid, not explicit indices */
 
-    /* Patches use patchWidth x patchHeight control points.
-     * Full Bezier tessellation requires generating a subdivided mesh.
-     * For now, render the raw control point triangles if indexes exist. */
-    if (surf->numIndexes > 0) {
-        R_DrawPlanarSurface(surf, verts, indexes);
+    int patchW = surf->patchWidth;
+    int patchH = surf->patchHeight;
+    if (patchW < 3 || patchH < 3) return;
+    if ((patchW & 1) == 0 || (patchH & 1) == 0) return; /* must be odd */
+
+    const drawVert_t *cp = &verts[surf->firstVert];
+    int numSubPatchesX = (patchW - 1) / 2;
+    int numSubPatchesY = (patchH - 1) / 2;
+
+    int tessW = PATCH_TESS_LEVEL + 1;  /* verts per sub-patch edge */
+
+    for (int py = 0; py < numSubPatchesY; py++) {
+        for (int px = 0; px < numSubPatchesX; px++) {
+            /* 3x3 control points for this sub-patch */
+            int baseX = px * 2;
+            int baseY = py * 2;
+
+            drawVert_t ctrl[3][3];
+            for (int cy = 0; cy < 3; cy++) {
+                for (int cx = 0; cx < 3; cx++) {
+                    int idx = (baseY + cy) * patchW + (baseX + cx);
+                    ctrl[cy][cx] = cp[idx];
+                }
+            }
+
+            /* Tessellate: evaluate biquadratic Bezier at grid points */
+            drawVert_t tessVerts[9][9]; /* max (PATCH_TESS_LEVEL+1)^2 */
+            for (int ty = 0; ty < tessW; ty++) {
+                float v = (float)ty / (float)PATCH_TESS_LEVEL;
+                float bv[3] = { BezierBasis2(0,v), BezierBasis2(1,v), BezierBasis2(2,v) };
+
+                for (int tx = 0; tx < tessW; tx++) {
+                    float u = (float)tx / (float)PATCH_TESS_LEVEL;
+                    float bu[3] = { BezierBasis2(0,u), BezierBasis2(1,u), BezierBasis2(2,u) };
+
+                    drawVert_t *out = &tessVerts[ty][tx];
+                    VectorClear(out->xyz);
+                    VectorClear(out->normal);
+                    out->st[0] = out->st[1] = 0;
+                    out->lightmap[0] = out->lightmap[1] = 0;
+                    for (int k = 0; k < 4; k++) out->color[k] = 0;
+
+                    float totalColor[4] = {0,0,0,0};
+
+                    for (int cy = 0; cy < 3; cy++) {
+                        for (int cx = 0; cx < 3; cx++) {
+                            float w = bu[cx] * bv[cy];
+                            const drawVert_t *c = &ctrl[cy][cx];
+
+                            out->xyz[0]    += w * c->xyz[0];
+                            out->xyz[1]    += w * c->xyz[1];
+                            out->xyz[2]    += w * c->xyz[2];
+                            out->normal[0] += w * c->normal[0];
+                            out->normal[1] += w * c->normal[1];
+                            out->normal[2] += w * c->normal[2];
+                            out->st[0]     += w * c->st[0];
+                            out->st[1]     += w * c->st[1];
+                            out->lightmap[0] += w * c->lightmap[0];
+                            out->lightmap[1] += w * c->lightmap[1];
+                            totalColor[0]  += w * c->color[0];
+                            totalColor[1]  += w * c->color[1];
+                            totalColor[2]  += w * c->color[2];
+                            totalColor[3]  += w * c->color[3];
+                        }
+                    }
+
+                    VectorNormalize(out->normal);
+                    for (int k = 0; k < 4; k++) {
+                        int cv = (int)totalColor[k];
+                        out->color[k] = (cv > 255) ? 255 : (cv < 0) ? 0 : (byte)cv;
+                    }
+                }
+            }
+
+            /* Render tessellated grid as triangle strip rows */
+            for (int ty = 0; ty < PATCH_TESS_LEVEL; ty++) {
+                glBegin(GL_TRIANGLE_STRIP);
+                for (int tx = 0; tx <= PATCH_TESS_LEVEL; tx++) {
+                    drawVert_t *v0 = &tessVerts[ty][tx];
+                    drawVert_t *v1 = &tessVerts[ty+1][tx];
+
+                    glTexCoord2fv(v0->st);
+                    glColor4ubv(v0->color);
+                    glNormal3fv(v0->normal);
+                    glVertex3fv(v0->xyz);
+
+                    glTexCoord2fv(v1->st);
+                    glColor4ubv(v1->color);
+                    glNormal3fv(v1->normal);
+                    glVertex3fv(v1->xyz);
+                }
+                glEnd();
+            }
+        }
     }
 }
 
@@ -522,6 +634,118 @@ void R_DrawWorldSurfaces(void) {
  * Draws TIKI skeletal models and brush entity models.
  * ========================================================================= */
 
+/* =========================================================================
+ * TIKI skeletal model rendering
+ *
+ * Renders TIKI models by skinning skeleton mesh vertices using the
+ * current animation frame's bone transforms. The vertex skinning loop:
+ *   1. Builds world-space bone matrix palette from animation data
+ *   2. For each skeleton surface, iterates variable-sized vertices
+ *   3. Accumulates weighted bone transforms per vertex
+ *   4. Submits skinned positions + normals + texcoords to GL
+ * ========================================================================= */
+
+#define MAX_SKINNED_VERTS 4096
+
+static void R_DrawTikiModel(refEntity_t *ent) {
+    /* Get TIKI model data */
+    extern tiki_model_t *TIKI_GetModel(dtiki_t handle);
+    tiki_model_t *tikiModel = TIKI_GetModel(ent->tiki);
+    if (!tikiModel || !tikiModel->skelmodel[0]) return;
+
+    /* Build bone matrix palette from animation frame */
+    extern int TIKI_BuildBoneMatrices(const char *, const char *, int,
+                                       float [][3][4], int);
+    float boneMatrices[100][3][4]; /* TIKI_SKEL_MAXBONES */
+
+    const char *animFile = NULL;
+    int frame = ent->frame;
+    if (tikiModel->num_anims > 0 && tikiModel->anims[0].filename[0]) {
+        animFile = tikiModel->anims[0].filename;
+    }
+
+    int numBones = TIKI_BuildBoneMatrices(tikiModel->skelmodel, animFile,
+                                           frame, boneMatrices, 100);
+    if (numBones <= 0) return;
+
+    /* Get skeleton surface data */
+    extern const byte *TIKI_GetSkelSurfaceData(const char *, int *);
+    int numSurfaces;
+    const byte *surfData = TIKI_GetSkelSurfaceData(tikiModel->skelmodel, &numSurfaces);
+    if (!surfData) return;
+
+    /* Temp arrays for skinned vertex output */
+    static vec3_t skinPositions[MAX_SKINNED_VERTS];
+    static vec3_t skinNormals[MAX_SKINNED_VERTS];
+    static vec2_t skinTexCoords[MAX_SKINNED_VERTS];
+
+    glColor4ub(ent->shaderRGBA[0], ent->shaderRGBA[1],
+               ent->shaderRGBA[2], ent->shaderRGBA[3]);
+
+    /* Iterate skeleton surfaces */
+    const skelSurface_t *surf = (const skelSurface_t *)surfData;
+    for (int s = 0; s < numSurfaces && surf; s++) {
+        int numTris = surf->numTriangles;
+        int numVerts = surf->numVerts;
+        if (numTris <= 0 || numVerts <= 0) goto nextSurf;
+        if (numVerts > MAX_SKINNED_VERTS) numVerts = MAX_SKINNED_VERTS;
+
+        /* Get triangle and vertex data */
+        const skelTriangle_t *tris =
+            (const skelTriangle_t *)((const byte *)surf + surf->ofsTriangles);
+        const byte *vPtr = (const byte *)surf + surf->ofsVerts;
+
+        /* Skin each vertex */
+        for (int v = 0; v < numVerts; v++) {
+            const skelVertex_t *sv = (const skelVertex_t *)vPtr;
+            int nw = sv->numWeights;
+
+            VectorClear(skinPositions[v]);
+            VectorCopy(sv->normal, skinNormals[v]);
+            skinTexCoords[v][0] = sv->texCoords[0];
+            skinTexCoords[v][1] = sv->texCoords[1];
+
+            /* Accumulate weighted bone transforms */
+            for (int w = 0; w < nw; w++) {
+                int bi = sv->weights[w].boneIndex;
+                float bw = sv->weights[w].boneWeight;
+                if (bi < 0 || bi >= numBones) continue;
+
+                const float *o = sv->weights[w].offset;
+                float *m0 = boneMatrices[bi][0];
+                float *m1 = boneMatrices[bi][1];
+                float *m2 = boneMatrices[bi][2];
+
+                skinPositions[v][0] += bw * (m0[0]*o[0] + m0[1]*o[1] + m0[2]*o[2] + m0[3]);
+                skinPositions[v][1] += bw * (m1[0]*o[0] + m1[1]*o[1] + m1[2]*o[2] + m1[3]);
+                skinPositions[v][2] += bw * (m2[0]*o[0] + m2[1]*o[1] + m2[2]*o[2] + m2[3]);
+            }
+
+            /* Advance to next variable-sized vertex */
+            vPtr += sizeof(vec3_t) + sizeof(vec2_t) + sizeof(int)
+                  + nw * sizeof(skelWeight_t);
+        }
+
+        /* Render triangles */
+        glBegin(GL_TRIANGLES);
+        for (int t = 0; t < numTris; t++) {
+            for (int vi = 0; vi < 3; vi++) {
+                int idx = tris[t].indexes[vi];
+                if (idx < 0 || idx >= numVerts) continue;
+                glTexCoord2fv(skinTexCoords[idx]);
+                glNormal3fv(skinNormals[idx]);
+                glVertex3fv(skinPositions[idx]);
+            }
+        }
+        glEnd();
+
+    nextSurf:;
+        int ofsEnd = surf->ofsEnd;
+        if (ofsEnd <= 0) break;
+        surf = (const skelSurface_t *)((const byte *)surf + ofsEnd);
+    }
+}
+
 void R_DrawEntitySurfaces(refEntity_t *entities, int numEntities) {
     const bspWorldRef_t *world = R_GetWorldData();
 
@@ -564,8 +788,10 @@ void R_DrawEntitySurfaces(refEntity_t *entities, int numEntities) {
                 const dsurface_t *surf = &world->surfaces[surfIdx];
                 R_DrawPlanarSurface(surf, world->verts, world->indexes);
             }
+        } else if (ent->tiki >= 0) {
+            /* TIKI skeletal model */
+            R_DrawTikiModel(ent);
         }
-        /* TIKI model rendering would go here once skeleton animation is complete */
 
         glPopMatrix();
     }

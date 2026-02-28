@@ -76,6 +76,13 @@ extern void SV_InitGameProgs(void);
 extern void SV_ShutdownGameProgs(void);
 extern game_export_t *SV_GetGameExport(void);
 
+/* Forward declarations for console commands */
+void SV_Map_f(void);
+void SV_KillServer_f(void);
+void SV_SaveGame_f(void);
+void SV_LoadGame_f(void);
+void SV_Autosave(void);
+
 /* =========================================================================
  * Initialization
  * ========================================================================= */
@@ -97,6 +104,10 @@ void SV_Init(void) {
     /* Register commands */
     Cmd_AddCommand("map", SV_Map_f);
     Cmd_AddCommand("killserver", SV_KillServer_f);
+    Cmd_AddCommand("save", SV_SaveGame_f);
+    Cmd_AddCommand("load", SV_LoadGame_f);
+    Cmd_AddCommand("savegame", SV_SaveGame_f);
+    Cmd_AddCommand("loadgame", SV_LoadGame_f);
 
     sv.initialized = qtrue;
     Com_Printf("Server initialized\n");
@@ -120,6 +131,10 @@ void SV_Shutdown(const char *finalmsg) {
 
     Cmd_RemoveCommand("map");
     Cmd_RemoveCommand("killserver");
+    Cmd_RemoveCommand("save");
+    Cmd_RemoveCommand("load");
+    Cmd_RemoveCommand("savegame");
+    Cmd_RemoveCommand("loadgame");
 
     sv.initialized = qfalse;
 }
@@ -218,6 +233,9 @@ void SV_SpawnServer(const char *mapname) {
     extern void CL_LoadMap(const char *mapname);
     CL_LoadMap(sv.mapfile);
 
+    /* Autosave after every successful map load */
+    SV_Autosave();
+
     Com_Printf("--- Server running: %s ---\n", mapname);
 }
 
@@ -254,6 +272,168 @@ void SV_KillServer_f(void) {
     }
 
     SV_Shutdown("Server killed by user");
+}
+
+/* =========================================================================
+ * Save / Load
+ *
+ * FAKK2 save flow:
+ *   Save:  WritePersistant -> WriteLevel
+ *   Load:  ReadPersistant -> SpawnServer(map) -> ReadLevel
+ *
+ * Save files live under "save/<name>". The game DLL handles its own
+ * archive format via the Archiver class; the engine just provides the
+ * filename and orchestrates the calls.
+ * ========================================================================= */
+
+#define SAVE_DIR "save"
+
+/* Build the save-file base path: "save/<name>" */
+static void SV_BuildSavePath(char *out, int outsize, const char *name) {
+    snprintf(out, outsize, "%s/%s", SAVE_DIR, name);
+}
+
+void SV_SaveGame_f(void) {
+    if (sv.state != SS_GAME) {
+        Com_Printf("Not playing a game\n");
+        return;
+    }
+
+    game_export_t *ge = SV_GetGameExport();
+    if (!ge) {
+        Com_Printf("No game module loaded\n");
+        return;
+    }
+
+    const char *saveName = "quick";
+    if (Cmd_Argc() >= 2) {
+        saveName = Cmd_Argv(1);
+    }
+
+    char path[MAX_QPATH];
+    SV_BuildSavePath(path, sizeof(path), saveName);
+
+    Com_Printf("Saving game to '%s'...\n", path);
+
+    /* Persistent state first (player inventory, health, etc.) */
+    if (ge->WritePersistant) {
+        ge->WritePersistant(path);
+    }
+
+    /* Level state (entities, scripts, triggers, etc.) */
+    if (ge->WriteLevel) {
+        ge->WriteLevel(path, qfalse);
+    }
+
+    /* Store the current map name alongside the save so we know which
+     * level to load when restoring.  The game DLL's archive may already
+     * contain this, but we keep a small engine-side sidecar for quick
+     * validation without needing the game DLL to parse its own format. */
+    char infopath[MAX_QPATH];
+    snprintf(infopath, sizeof(infopath), "%s/%s.ssv", SAVE_DIR, saveName);
+    char info[256];
+    snprintf(info, sizeof(info), "%s\n%d\n", sv.mapname, sv.time);
+    FS_WriteFile(infopath, info, (int)strlen(info));
+
+    Com_Printf("Game saved.\n");
+}
+
+void SV_LoadGame_f(void) {
+    game_export_t *ge;
+
+    const char *saveName = "quick";
+    if (Cmd_Argc() >= 2) {
+        saveName = Cmd_Argv(1);
+    }
+
+    /* Read the engine-side sidecar to find the map name */
+    char infopath[MAX_QPATH];
+    snprintf(infopath, sizeof(infopath), "%s/%s.ssv", SAVE_DIR, saveName);
+    void *infobuf = NULL;
+    long infolen = FS_ReadFile(infopath, &infobuf);
+    if (infolen <= 0 || !infobuf) {
+        Com_Printf("Save file not found: %s\n", saveName);
+        return;
+    }
+
+    /* Parse map name from first line */
+    char mapname[MAX_QPATH];
+    memset(mapname, 0, sizeof(mapname));
+    const char *p = (const char *)infobuf;
+    int mi = 0;
+    while (*p && *p != '\n' && *p != '\r' && mi < MAX_QPATH - 1) {
+        mapname[mi++] = *p++;
+    }
+    mapname[mi] = '\0';
+    FS_FreeFile(infobuf);
+
+    if (!mapname[0]) {
+        Com_Printf("Invalid save file: %s\n", saveName);
+        return;
+    }
+
+    char path[MAX_QPATH];
+    SV_BuildSavePath(path, sizeof(path), saveName);
+
+    Com_Printf("Loading game from '%s' (map: %s)...\n", path, mapname);
+
+    /* Validate the archive before committing */
+    ge = SV_GetGameExport();
+    if (ge && ge->LevelArchiveValid) {
+        if (!ge->LevelArchiveValid(path)) {
+            Com_Printf("Save file is invalid or corrupted: %s\n", path);
+            return;
+        }
+    }
+
+    /* Restore persistent state (player stats, inventory) */
+    if (ge && ge->ReadPersistant) {
+        ge->ReadPersistant(path);
+    }
+
+    /* Spawn the server fresh for that map -- this loads the BSP,
+     * initialises the game module, spawns default entities, and
+     * connects the local client. */
+    SV_SpawnServer(mapname);
+
+    /* Now overlay the saved entity state on top of the fresh level */
+    ge = SV_GetGameExport();
+    if (ge && ge->ReadLevel) {
+        if (!ge->ReadLevel(path)) {
+            Com_Printf("WARNING: failed to read level state from '%s'\n", path);
+        }
+    }
+
+    Com_Printf("Game loaded.\n");
+}
+
+/* Autosave -- called after successful map load if desired */
+void SV_Autosave(void) {
+    if (sv.state != SS_GAME) return;
+
+    game_export_t *ge = SV_GetGameExport();
+    if (!ge) return;
+
+    char path[MAX_QPATH];
+    SV_BuildSavePath(path, sizeof(path), "autosave");
+
+    Com_DPrintf("Autosaving to '%s'...\n", path);
+
+    if (ge->WritePersistant) {
+        ge->WritePersistant(path);
+    }
+    if (ge->WriteLevel) {
+        ge->WriteLevel(path, qtrue);  /* autosave = qtrue */
+    }
+
+    /* Sidecar with map info */
+    char infopath[MAX_QPATH];
+    snprintf(infopath, sizeof(infopath), "%s/autosave.ssv", SAVE_DIR);
+    char info[256];
+    snprintf(info, sizeof(info), "%s\n%d\n", sv.mapname, sv.time);
+    FS_WriteFile(infopath, info, (int)strlen(info));
+
+    Com_DPrintf("Autosave complete.\n");
 }
 
 /* =========================================================================

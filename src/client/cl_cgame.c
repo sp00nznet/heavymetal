@@ -173,7 +173,14 @@ static void CGI_S_StartLocalSound(const char *sound_name) {
  * ========================================================================= */
 
 static gameState_t      cl_gameState;
-snapshot_t              cl_snapshot;
+
+/* Dual snapshot buffer for entity interpolation.
+ * The cgame retrieves both the current and previous snapshot via
+ * CGI_GetSnapshot(n) and CGI_GetSnapshot(n-1) to lerp entities. */
+#define MAX_SNAPSHOT_HISTORY 32
+static snapshot_t       cl_snapshots[MAX_SNAPSHOT_HISTORY];
+static int              cl_snapNums[MAX_SNAPSHOT_HISTORY]; /* snap number per slot */
+snapshot_t              cl_snapshot; /* latest snapshot alias */
 static int              cl_currentSnapshot;
 int                     cl_currentServerTime;
 
@@ -223,21 +230,28 @@ void CL_SetSnapshot(int serverTime, int snapNum,
     cl_currentServerTime = serverTime;
     cl_currentSnapshot = snapNum;
 
-    memset(&cl_snapshot, 0, sizeof(cl_snapshot));
-    cl_snapshot.serverTime = serverTime;
+    /* Store in ring buffer for history */
+    int idx = snapNum % MAX_SNAPSHOT_HISTORY;
+    snapshot_t *snap = &cl_snapshots[idx];
+    memset(snap, 0, sizeof(*snap));
+    snap->serverTime = serverTime;
+    cl_snapNums[idx] = snapNum;
 
     if (ps) {
-        cl_snapshot.ps = *ps;
+        snap->ps = *ps;
     }
 
     if (entities && numEntities > 0) {
         if (numEntities > MAX_ENTITIES_IN_SNAPSHOT) {
             numEntities = MAX_ENTITIES_IN_SNAPSHOT;
         }
-        memcpy(cl_snapshot.entities, entities,
+        memcpy(snap->entities, entities,
                numEntities * sizeof(entityState_t));
-        cl_snapshot.numEntities = numEntities;
+        snap->numEntities = numEntities;
     }
+
+    /* Keep latest snapshot alias */
+    cl_snapshot = *snap;
 }
 
 static void CGI_GetGameState(gameState_t *gs) {
@@ -246,7 +260,25 @@ static void CGI_GetGameState(gameState_t *gs) {
 
 static int CGI_GetSnapshot(int snapshotNumber, snapshot_t *snapshot) {
     if (!snapshot) return 0;
-    *snapshot = cl_snapshot;
+
+    /* Look up the requested snapshot from the history ring buffer */
+    if (snapshotNumber <= 0 ||
+        snapshotNumber > cl_currentSnapshot ||
+        cl_currentSnapshot - snapshotNumber >= MAX_SNAPSHOT_HISTORY) {
+        /* Requested snapshot too old or invalid -- return latest */
+        *snapshot = cl_snapshot;
+        return 1;
+    }
+
+    int idx = snapshotNumber % MAX_SNAPSHOT_HISTORY;
+    snapshot_t *stored = &cl_snapshots[idx];
+    if (cl_snapNums[idx] != snapshotNumber) {
+        /* Slot was overwritten -- return latest */
+        *snapshot = cl_snapshot;
+        return 1;
+    }
+
+    *snapshot = *stored;
     return 1;
 }
 
