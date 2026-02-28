@@ -518,6 +518,79 @@ void SND_SetVolume(float master, float music) {
     if (music >= 0.0f) snd_backend.musicVolume = music;
 }
 
+/* =========================================================================
+ * Looping sound management
+ *
+ * Looping sounds are re-added every frame via S_AddLoopingSound.
+ * S_ClearLoopingSounds marks all looping channels for removal;
+ * they survive only if re-added during the same frame.
+ * ========================================================================= */
+
+void SND_ClearLoopingSounds(void) {
+    for (int i = 0; i < MAX_SOUND_CHANNELS; i++) {
+        if (snd_channels[i].active && snd_channels[i].looping) {
+            /* Mark for potential removal -- if not re-added this frame,
+             * the channel will be deactivated during the next clear. */
+            snd_channels[i].looping = 2;  /* 2 = pending removal */
+        }
+    }
+}
+
+void SND_AddLoopingSound(const vec3_t origin, sfxHandle_t sfx,
+                          float volume, float minDist) {
+    if (!snd_backend.initialized) return;
+    if (sfx < 0 || sfx >= sfx_count) return;
+
+    /* Check if this sfx is already playing as a looping sound */
+    for (int i = 0; i < MAX_SOUND_CHANNELS; i++) {
+        if (snd_channels[i].active && snd_channels[i].looping &&
+            snd_channels[i].sfx == &sfx_cache[sfx]) {
+            /* Update position and keep alive */
+            if (origin) VectorCopy(origin, snd_channels[i].origin);
+            snd_channels[i].volume = volume;
+            snd_channels[i].looping = qtrue;  /* un-mark pending removal */
+            return;
+        }
+    }
+
+    /* Start a new looping channel */
+    sndChannel_t *ch = SND_PickChannel(-2, 0); /* -2 = looping entity slot */
+    memset(ch, 0, sizeof(*ch));
+
+    ch->active = qtrue;
+    ch->entityNum = -2;
+    ch->channel = 0;
+    ch->sfx = &sfx_cache[sfx];
+    ch->playOffset = 0;
+    ch->volume = volume;
+    ch->attenuation = minDist;
+    ch->pitch = 1.0f;
+    ch->looping = qtrue;
+
+    if (origin) {
+        VectorCopy(origin, ch->origin);
+        ch->positional = qtrue;
+    } else {
+        ch->positional = qfalse;
+    }
+}
+
+/* =========================================================================
+ * Entity position tracking for moving sound sources
+ * ========================================================================= */
+
+void SND_UpdateEntityPosition(int entityNum, const vec3_t origin) {
+    if (!origin) return;
+
+    for (int i = 0; i < MAX_SOUND_CHANNELS; i++) {
+        if (snd_channels[i].active &&
+            snd_channels[i].entityNum == entityNum &&
+            snd_channels[i].positional) {
+            VectorCopy(origin, snd_channels[i].origin);
+        }
+    }
+}
+
 void SND_StopAllSounds(void) {
 #ifdef USE_SDL2
     if (snd_backend.deviceId) {

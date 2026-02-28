@@ -78,16 +78,14 @@ void S_StartLocalSoundName(const char *sound_name) {
 
 void S_ClearLoopingSounds(void) {
     if (!snd_initialized) return;
-    /* TODO: Mark all looping channels for removal */
+    SND_ClearLoopingSounds();
 }
 
 void S_AddLoopingSound(const vec3_t origin, const vec3_t velocity,
                        sfxHandle_t sfx, float volume, float minDist) {
     if (!snd_initialized) return;
     (void)velocity; /* velocity-based doppler not yet implemented */
-    /* Play as a looping positioned sound on a dedicated entity slot */
-    SND_StartSound(origin, -1, 0, sfx, volume, minDist, 1.0f);
-    /* TODO: Set looping flag on the allocated channel */
+    SND_AddLoopingSound(origin, sfx, volume, minDist);
 }
 
 /* =========================================================================
@@ -113,8 +111,10 @@ void S_EndRegistration(void) {
 
 void S_UpdateEntity(int entityNum, const vec3_t origin, const vec3_t velocity,
                     qboolean useListener) {
-    (void)entityNum; (void)origin; (void)velocity; (void)useListener;
-    /* TODO: Update entity position for moving sound sources */
+    if (!snd_initialized) return;
+    (void)velocity; /* doppler not implemented */
+    (void)useListener;
+    SND_UpdateEntityPosition(entityNum, origin);
 }
 
 void S_Respatialize(int entityNum, vec3_t origin, vec3_t axis[3]) {

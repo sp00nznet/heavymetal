@@ -183,18 +183,133 @@ void R_LoadLightmaps(const byte *data, int dataLen) {
  * Grid cells store directional light data compressed into bytes.
  * ========================================================================= */
 
+/* =========================================================================
+ * Light grid sampling
+ *
+ * Q3/FAKK2 light grid format: each cell is 8 bytes:
+ *   [0-2] ambient RGB (bytes)
+ *   [3-5] directed RGB (bytes)
+ *   [6]   latitude (0-255 maps to 0-360 degrees)
+ *   [7]   longitude (0-255 maps to 0-180 degrees)
+ *
+ * The grid covers the entire world bounding box with cells spaced
+ * at gridSize intervals (typically 64x64x128). Grid bounds and origin
+ * are derived from the world model's bounding box.
+ * ========================================================================= */
+
+#define LIGHTGRID_CELL_SIZE     8
+#define LIGHTGRID_STEP_X        64
+#define LIGHTGRID_STEP_Y        64
+#define LIGHTGRID_STEP_Z        128
+
+/* Grid bounds computed from BSP world model */
+static vec3_t   r_gridMins;
+static vec3_t   r_gridSize = { LIGHTGRID_STEP_X, LIGHTGRID_STEP_Y, LIGHTGRID_STEP_Z };
+static int      r_gridBounds[3];
+static byte     *r_gridData;
+static int      r_gridDataLen;
+
+void R_SetupLightGrid(const float *worldMins, const float *worldMaxs,
+                       byte *gridData, int gridLen) {
+    VectorCopy(worldMins, r_gridMins);
+    r_gridData = gridData;
+    r_gridDataLen = gridLen;
+
+    for (int i = 0; i < 3; i++) {
+        r_gridBounds[i] = (int)((worldMaxs[i] - worldMins[i]) / r_gridSize[i]) + 1;
+        if (r_gridBounds[i] < 1) r_gridBounds[i] = 1;
+    }
+}
+
+static qboolean R_SampleLightGrid(int ix, int iy, int iz,
+                                    vec3_t ambient, vec3_t directed, vec3_t dir) {
+    if (!r_gridData || r_gridDataLen <= 0) return qfalse;
+    if (ix < 0 || iy < 0 || iz < 0) return qfalse;
+    if (ix >= r_gridBounds[0] || iy >= r_gridBounds[1] || iz >= r_gridBounds[2])
+        return qfalse;
+
+    int offset = ((iz * r_gridBounds[1] + iy) * r_gridBounds[0] + ix) * LIGHTGRID_CELL_SIZE;
+    if (offset + LIGHTGRID_CELL_SIZE > r_gridDataLen) return qfalse;
+
+    const byte *cell = r_gridData + offset;
+
+    /* Ambient and directed RGB (0-255 -> 0.0-1.0) */
+    ambient[0]  = cell[0] / 255.0f;
+    ambient[1]  = cell[1] / 255.0f;
+    ambient[2]  = cell[2] / 255.0f;
+    directed[0] = cell[3] / 255.0f;
+    directed[1] = cell[4] / 255.0f;
+    directed[2] = cell[5] / 255.0f;
+
+    /* Decode light direction from spherical coordinates */
+    float lat = cell[6] * (2.0f * 3.14159265f / 255.0f);
+    float lng = cell[7] * (3.14159265f / 255.0f);
+
+    dir[0] = cosf(lat) * sinf(lng);
+    dir[1] = sinf(lat) * sinf(lng);
+    dir[2] = cosf(lng);
+
+    return qtrue;
+}
+
 void R_LightForPoint(const vec3_t point, vec3_t ambientLight,
                       vec3_t directedLight, vec3_t lightDir) {
-    /* TODO: Sample light grid at point
-     *
-     * 1. Convert world point to grid coordinates
-     * 2. Trilinear interpolate 8 surrounding grid cells
-     * 3. Extract ambient RGB, directed RGB, and light direction
-     *
-     * For now, provide sensible defaults. */
+    /* Default values in case grid is not loaded */
     VectorSet(ambientLight, 0.3f, 0.3f, 0.3f);
     VectorSet(directedLight, 0.7f, 0.7f, 0.7f);
     VectorSet(lightDir, -0.5f, -0.5f, -1.0f);
+
+    if (!r_gridData || r_gridDataLen <= 0) {
+        VectorNormalize(lightDir);
+        return;
+    }
+
+    /* Convert world position to grid coordinates */
+    float fx = (point[0] - r_gridMins[0]) / r_gridSize[0];
+    float fy = (point[1] - r_gridMins[1]) / r_gridSize[1];
+    float fz = (point[2] - r_gridMins[2]) / r_gridSize[2];
+
+    int ix = (int)fx;
+    int iy = (int)fy;
+    int iz = (int)fz;
+
+    /* Fractional parts for interpolation */
+    float fracX = fx - (float)ix;
+    float fracY = fy - (float)iy;
+    float fracZ = fz - (float)iz;
+
+    /* Trilinear interpolation of 8 surrounding cells */
+    vec3_t totalAmbient = {0, 0, 0};
+    vec3_t totalDirected = {0, 0, 0};
+    vec3_t totalDir = {0, 0, 0};
+    float totalWeight = 0.0f;
+
+    for (int dz = 0; dz < 2; dz++) {
+        for (int dy = 0; dy < 2; dy++) {
+            for (int dx = 0; dx < 2; dx++) {
+                vec3_t a, d, dir;
+                if (!R_SampleLightGrid(ix + dx, iy + dy, iz + dz, a, d, dir))
+                    continue;
+
+                float weight = (dx ? fracX : (1.0f - fracX))
+                             * (dy ? fracY : (1.0f - fracY))
+                             * (dz ? fracZ : (1.0f - fracZ));
+
+                VectorMA(totalAmbient, weight, a, totalAmbient);
+                VectorMA(totalDirected, weight, d, totalDirected);
+                VectorMA(totalDir, weight, dir, totalDir);
+                totalWeight += weight;
+            }
+        }
+    }
+
+    if (totalWeight > 0.0f) {
+        float invWeight = 1.0f / totalWeight;
+        VectorScale(totalAmbient, invWeight, ambientLight);
+        VectorScale(totalDirected, invWeight, directedLight);
+        VectorScale(totalDir, invWeight, lightDir);
+    }
+
     VectorNormalize(lightDir);
 }
 

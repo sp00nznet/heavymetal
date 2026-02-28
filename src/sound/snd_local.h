@@ -91,6 +91,10 @@ void            SND_UpdateListener(const vec3_t origin, const vec3_t forward,
 float           SND_SoundLength(sfxHandle_t sfx);
 void            SND_SetVolume(float master, float music);
 void            SND_StopAllSounds(void);
+void            SND_ClearLoopingSounds(void);
+void            SND_AddLoopingSound(const vec3_t origin, sfxHandle_t sfx,
+                                     float volume, float minDist);
+void            SND_UpdateEntityPosition(int entityNum, const vec3_t origin);
 
 #ifdef __cplusplus
 }

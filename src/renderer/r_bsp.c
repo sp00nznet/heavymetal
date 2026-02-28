@@ -258,6 +258,20 @@ qboolean R_LoadBSP(const char *name) {
 
     s_world.loaded = qtrue;
 
+    /* Setup light grid for entity lighting */
+    if (s_world.lightGrid && s_world.lightGridLen > 0 && s_world.models) {
+        extern void R_SetupLightGrid(const float *worldMins, const float *worldMaxs,
+                                      byte *gridData, int gridLen);
+        R_SetupLightGrid(s_world.models[0].mins, s_world.models[0].maxs,
+                          s_world.lightGrid, s_world.lightGridLen);
+    }
+
+    /* Load lightmaps into GL textures */
+    if (s_world.lightmapData && s_world.numLightmaps > 0) {
+        extern void R_LoadLightmaps(const byte *data, int dataLen);
+        R_LoadLightmaps(s_world.lightmapData, s_world.numLightmaps);
+    }
+
     FS_FreeFile(buffer);
 
     /* Print statistics */

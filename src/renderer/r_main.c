@@ -129,13 +129,29 @@ void R_EndFrame(void) {
 
 #define MAX_SCENE_ENTITIES  4096
 #define MAX_SCENE_POLYS     4096
+#define MAX_SCENE_POLY_VERTS 16384
 #define MAX_SCENE_LIGHTS    256
 
 static refEntity_t  scene_entities[MAX_SCENE_ENTITIES];
 static int          scene_numEntities;
 
+/* Polygon batches for effects/decals submitted via R_AddPolyToScene */
+typedef struct {
+    qhandle_t   shader;
+    int         firstVert;
+    int         numVerts;
+    int         renderfx;
+} scenePoly_t;
+
+static scenePoly_t  scene_polys[MAX_SCENE_POLYS];
+static int          scene_numPolys;
+static polyVert_t   scene_polyVerts[MAX_SCENE_POLY_VERTS];
+static int          scene_numPolyVerts;
+
 void R_ClearScene(void) {
     scene_numEntities = 0;
+    scene_numPolys = 0;
+    scene_numPolyVerts = 0;
 }
 
 void R_AddRefEntityToScene(refEntity_t *ent) {
@@ -152,8 +168,19 @@ void R_AddRefSpriteToScene(refEntity_t *ent) {
 /* R_AddLightToScene is in r_light.c */
 
 void R_AddPolyToScene(qhandle_t hShader, int numVerts, const polyVert_t *verts, int renderfx) {
-    (void)hShader; (void)numVerts; (void)verts; (void)renderfx;
-    /* TODO: Add polygon to scene (used for marks/decals and effects) */
+    if (!verts || numVerts < 3) return;
+    if (scene_numPolys >= MAX_SCENE_POLYS) return;
+    if (scene_numPolyVerts + numVerts > MAX_SCENE_POLY_VERTS) return;
+
+    scenePoly_t *poly = &scene_polys[scene_numPolys++];
+    poly->shader = hShader;
+    poly->firstVert = scene_numPolyVerts;
+    poly->numVerts = numVerts;
+    poly->renderfx = renderfx;
+
+    memcpy(&scene_polyVerts[scene_numPolyVerts], verts,
+           numVerts * sizeof(polyVert_t));
+    scene_numPolyVerts += numVerts;
 }
 
 void R_RenderScene(const refdef_t *fd) {
@@ -224,6 +251,31 @@ void R_RenderScene(const refdef_t *fd) {
     /* Draw entities */
     extern void R_DrawEntitySurfaces(refEntity_t *entities, int numEntities);
     R_DrawEntitySurfaces(scene_entities, scene_numEntities);
+
+    /* Draw scene polygons (effects, decals submitted via R_AddPolyToScene) */
+    if (scene_numPolys > 0) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_CULL_FACE);
+
+        for (int pi = 0; pi < scene_numPolys; pi++) {
+            scenePoly_t *poly = &scene_polys[pi];
+            /* TODO: Bind poly->shader texture when shader system is complete */
+
+            glBegin(GL_TRIANGLE_FAN);
+            for (int vi = 0; vi < poly->numVerts; vi++) {
+                polyVert_t *v = &scene_polyVerts[poly->firstVert + vi];
+                glColor4ubv(v->modulate);
+                glTexCoord2fv(v->st);
+                glVertex3fv(v->xyz);
+            }
+            glEnd();
+        }
+
+        glDepthMask(GL_TRUE);
+        glEnable(GL_CULL_FACE);
+    }
 
     /* Draw marks/decals */
     extern void R_DrawMarks(void);
@@ -371,21 +423,98 @@ void R_DebugLine(vec3_t start, vec3_t end, float r, float g, float b, float alph
  * them as a fading ribbon.
  * ========================================================================= */
 
-static qboolean swipe_active = qfalse;
+/* =========================================================================
+ * Weapon swipe implementation
+ *
+ * The swipe system collects pairs of edge points (p1, p2) submitted
+ * over successive frames. These form a ribbon that fades over its
+ * lifetime. Each pair defines a cross-section of the trail.
+ *
+ * Rendering: Construct a triangle strip from consecutive edge pairs.
+ * Alpha fades from 1.0 at the newest point to 0.0 at the oldest.
+ * ========================================================================= */
+
+#define MAX_SWIPE_POINTS    32
+
+typedef struct {
+    vec3_t  p1;         /* top edge */
+    vec3_t  p2;         /* bottom edge */
+    float   time;       /* timestamp when submitted */
+} swipePoint_t;
+
+static struct {
+    qboolean        active;
+    float           startTime;
+    float           life;       /* seconds until full fade */
+    qhandle_t       shader;
+    swipePoint_t    points[MAX_SWIPE_POINTS];
+    int             numPoints;
+} swipe;
 
 void R_SwipeBegin(float thistime, float life, qhandle_t shader) {
-    (void)thistime; (void)life; (void)shader;
-    swipe_active = qtrue;
+    swipe.active = qtrue;
+    swipe.startTime = thistime;
+    swipe.life = life > 0.0f ? life : 0.5f;
+    swipe.shader = shader;
+    swipe.numPoints = 0;
 }
 
 void R_SwipePoint(vec3_t p1, vec3_t p2, float time) {
-    (void)p1; (void)p2; (void)time;
-    /* TODO: Add swipe edge pair */
+    if (!swipe.active) return;
+    if (swipe.numPoints >= MAX_SWIPE_POINTS) return;
+
+    swipePoint_t *sp = &swipe.points[swipe.numPoints++];
+    VectorCopy(p1, sp->p1);
+    VectorCopy(p2, sp->p2);
+    sp->time = time;
 }
 
 void R_SwipeEnd(void) {
-    swipe_active = qfalse;
-    /* TODO: Finalize and submit swipe for rendering */
+    if (!swipe.active || swipe.numPoints < 2) {
+        swipe.active = qfalse;
+        swipe.numPoints = 0;
+        return;
+    }
+
+    /* Render the swipe as a fading triangle strip */
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_TEXTURE_2D);
+    /* TODO: Bind swipe.shader when shader system is complete */
+
+    glBegin(GL_TRIANGLE_STRIP);
+    for (int i = 0; i < swipe.numPoints; i++) {
+        swipePoint_t *sp = &swipe.points[i];
+
+        /* Alpha fades from 1.0 (newest) to 0.0 (oldest) */
+        float frac = (float)i / (float)(swipe.numPoints - 1);
+        float alpha = 1.0f - frac;
+
+        /* Also fade based on time if beyond lifetime */
+        float age = swipe.points[swipe.numPoints - 1].time - sp->time;
+        if (age > swipe.life) alpha = 0.0f;
+        else if (swipe.life > 0.0f) alpha *= 1.0f - (age / swipe.life);
+
+        /* White with computed alpha -- shader would override color */
+        glColor4f(1.0f, 0.9f, 0.7f, alpha);
+
+        /* Texture coordinate: U from 0 to 1 along the strip, V = 0/1 for edges */
+        float u = frac;
+        glTexCoord2f(u, 0.0f);
+        glVertex3fv(sp->p1);
+        glTexCoord2f(u, 1.0f);
+        glVertex3fv(sp->p2);
+    }
+    glEnd();
+
+    glEnable(GL_TEXTURE_2D);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_CULL_FACE);
+
+    swipe.active = qfalse;
+    swipe.numPoints = 0;
 }
 
 /* =========================================================================
