@@ -279,10 +279,42 @@ const char *TIKI_TagNameForNum(dtiki_t handle, int num) {
  * ========================================================================= */
 
 void TIKI_CalculateBounds(dtiki_t handle, float scale, vec3_t mins, vec3_t maxs) {
-    /* Bounds calculation requires skeleton/mesh binary data */
-    (void)handle;
-    VectorSet(mins, -16 * scale, -16 * scale, 0);
-    VectorSet(maxs, 16 * scale, 16 * scale, 72 * scale);
+    tiki_model_t *m = TIKI_GetModel(handle);
+    if (!m) {
+        VectorSet(mins, -16 * scale, -16 * scale, 0);
+        VectorSet(maxs, 16 * scale, 16 * scale, 72 * scale);
+        return;
+    }
+
+    /* Try to get bounds from the first animation's first frame.
+     * The skeleton animation data (.ska) stores per-frame bounding boxes. */
+    extern void TIKI_SkelAnimFrameBounds(const char *filename, int framenum,
+                                          vec3_t mins, vec3_t maxs);
+
+    qboolean gotBounds = qfalse;
+    if (m->num_anims > 0 && m->anims[0].filename[0]) {
+        vec3_t frameMins, frameMaxs;
+        TIKI_SkelAnimFrameBounds(m->anims[0].filename, 0, frameMins, frameMaxs);
+        /* Check if we got real bounds (not the default 16/72 fallback) */
+        if (frameMins[0] != -16.0f || frameMaxs[0] != 16.0f ||
+            frameMins[2] != 0.0f || frameMaxs[2] != 72.0f) {
+            VectorScale(frameMins, scale, mins);
+            VectorScale(frameMaxs, scale, maxs);
+            gotBounds = qtrue;
+        }
+    }
+
+    if (!gotBounds) {
+        /* Fallback: use model's configured radius if available */
+        if (m->radius > 0.0f) {
+            float r = m->radius * scale;
+            VectorSet(mins, -r, -r, 0);
+            VectorSet(maxs, r, r, r * 2.0f);
+        } else {
+            VectorSet(mins, -16 * scale, -16 * scale, 0);
+            VectorSet(maxs, 16 * scale, 16 * scale, 72 * scale);
+        }
+    }
 }
 
 qboolean TIKI_InitCommands(dtiki_t handle, tiki_cmd_t *tiki_cmd) {

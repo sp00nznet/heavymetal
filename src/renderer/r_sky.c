@@ -325,12 +325,21 @@ void R_DrawSky(const vec3_t viewOrigin) {
  * ========================================================================= */
 
 qboolean R_IsSkyShader(int shaderIndex) {
-    /* Check if the shader has the sky flag set.
+    /* Check if the BSP shader has the SURF_SKY flag set.
      * Called during BSP rendering to identify sky surfaces. */
-    extern void *R_GetShaderByHandle(int h);
-    /* For now, return false; will be wired when shader system is connected */
-    (void)shaderIndex;
-    return qfalse;
+    extern void *R_GetBSPWorldPtr(void);
+    typedef struct {
+        char        name[MAX_QPATH];
+        dheader_t   header;
+        int         numShaders;
+        dshader_t   *shaders;
+    } bspShadRef_t;
+
+    bspShadRef_t *w = (bspShadRef_t *)R_GetBSPWorldPtr();
+    if (!w || !w->shaders || shaderIndex < 0 || shaderIndex >= w->numShaders)
+        return qfalse;
+
+    return (w->shaders[shaderIndex].surfaceFlags & SURF_SKY) != 0;
 }
 
 /* =========================================================================

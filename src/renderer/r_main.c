@@ -116,6 +116,21 @@ void R_Shutdown(void) {
 }
 
 /* =========================================================================
+ * Far clip plane (set by server via SV_SetFarPlane)
+ * ========================================================================= */
+
+static float r_farClipDist = 4096.0f;
+
+void R_SetFarClip(float dist) {
+    if (dist > 0.0f)
+        r_farClipDist = dist;
+}
+
+float R_GetFarClip(void) {
+    return r_farClipDist;
+}
+
+/* =========================================================================
  * Frame management
  * ========================================================================= */
 

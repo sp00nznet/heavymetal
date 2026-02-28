@@ -30,6 +30,10 @@ static cplane_t     box_planes[12];
 static cbrushside_t box_sides[6];
 static cbrush_t     box_brush;
 
+/* Cylinder trace state (set per-trace, used by leaf/tree traversal) */
+static qboolean cm_traceCylinder;
+static float    cm_cylinderRadius;
+
 /* =========================================================================
  * Initialization
  * ========================================================================= */
@@ -512,12 +516,24 @@ static void CM_TraceThroughLeaf(trace_t *tw, int leafnum,
                 }
             } else {
                 /* Non-axial plane */
-                float offset = 0;
-                for (int k = 0; k < 3; k++) {
-                    if (plane->normal[k] < 0)
-                        offset += mins[k] * plane->normal[k];
+                float offset;
+                if (cm_traceCylinder) {
+                    /* Cylinder hull: XY uses circular radius, Z uses box extent */
+                    float xyLen = sqrtf(plane->normal[0]*plane->normal[0] +
+                                        plane->normal[1]*plane->normal[1]);
+                    offset = cm_cylinderRadius * xyLen;
+                    if (plane->normal[2] < 0)
+                        offset += mins[2] * plane->normal[2];
                     else
-                        offset += maxs[k] * plane->normal[k];
+                        offset += maxs[2] * plane->normal[2];
+                } else {
+                    offset = 0;
+                    for (int k = 0; k < 3; k++) {
+                        if (plane->normal[k] < 0)
+                            offset += mins[k] * plane->normal[k];
+                        else
+                            offset += maxs[k] * plane->normal[k];
+                    }
                 }
                 d1 = DotProduct(start, plane->normal) - (plane->dist + offset);
                 d2 = DotProduct(end, plane->normal) - (plane->dist + offset);
@@ -598,10 +614,17 @@ static void CM_TraceThroughTree(trace_t *tw, int num,
     } else {
         d1 = DotProduct(p1, plane->normal) - plane->dist;
         d2 = DotProduct(p2, plane->normal) - plane->dist;
-        offset = 0;
-        for (int i = 0; i < 3; i++) {
-            float v = fabsf(mins[i]) > fabsf(maxs[i]) ? fabsf(mins[i]) : fabsf(maxs[i]);
-            offset += v * fabsf(plane->normal[i]);
+        if (cm_traceCylinder) {
+            float xyLen = sqrtf(plane->normal[0]*plane->normal[0] +
+                                plane->normal[1]*plane->normal[1]);
+            float halfZ = fabsf(maxs[2]) > fabsf(mins[2]) ? fabsf(maxs[2]) : fabsf(mins[2]);
+            offset = cm_cylinderRadius * xyLen + halfZ * fabsf(plane->normal[2]);
+        } else {
+            offset = 0;
+            for (int i = 0; i < 3; i++) {
+                float v = fabsf(mins[i]) > fabsf(maxs[i]) ? fabsf(mins[i]) : fabsf(maxs[i]);
+                offset += v * fabsf(plane->normal[i]);
+            }
         }
     }
 
@@ -654,8 +677,6 @@ static void CM_TraceThroughTree(trace_t *tw, int num,
 void CM_BoxTrace(trace_t *results, const vec3_t start, const vec3_t end,
                  const vec3_t mins, const vec3_t maxs, clipHandle_t model,
                  int brushmask, qboolean cylinder) {
-    (void)cylinder; /* TODO: cylinder trace for FAKK2 character collision */
-
     memset(results, 0, sizeof(*results));
     results->fraction = 1.0f;
     results->entityNum = -1;
@@ -668,6 +689,17 @@ void CM_BoxTrace(trace_t *results, const vec3_t start, const vec3_t end,
     vec3_t tmins, tmaxs;
     if (mins) { VectorCopy(mins, tmins); } else { VectorClear(tmins); }
     if (maxs) { VectorCopy(maxs, tmaxs); } else { VectorClear(tmaxs); }
+
+    /* Set cylinder trace state for leaf/tree traversal.
+     * FAKK2 uses cylindrical hulls for character collision --
+     * the XY cross-section is a circle rather than a rectangle,
+     * reducing corner-snagging on geometry. */
+    cm_traceCylinder = cylinder;
+    if (cylinder) {
+        float halfX = (tmaxs[0] - tmins[0]) * 0.5f;
+        float halfY = (tmaxs[1] - tmins[1]) * 0.5f;
+        cm_cylinderRadius = halfX > halfY ? halfX : halfY;
+    }
 
     if (model == BOX_MODEL_HANDLE) {
         /* Trace against temp box model */
@@ -744,6 +776,7 @@ void CM_TransformedBoxTrace(trace_t *results, const vec3_t start, const vec3_t e
         for (int i = 0; i < 3; i++)
             results->endpos[i] = start[i] + results->fraction * (end[i] - start[i]);
     }
+}
 
 /* =========================================================================
  * PVS queries
@@ -764,7 +797,10 @@ qboolean CM_InPVS(vec3_t p1, vec3_t p2) {
 }
 
 qboolean CM_InPVSIgnorePortals(vec3_t p1, vec3_t p2) {
-    /* Same as CM_InPVS for now -- area portal handling is TODO */
+    /* Cluster-based PVS only, ignoring area portal connectivity.
+     * Our CM_InPVS already uses pure cluster PVS without area checks,
+     * so both functions behave identically. This is the correct behavior
+     * for the "ignore portals" variant used by server-side broad-phase culling. */
     return CM_InPVS(p1, p2);
 }
 

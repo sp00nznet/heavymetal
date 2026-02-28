@@ -591,6 +591,19 @@ void SND_UpdateEntityPosition(int entityNum, const vec3_t origin) {
     }
 }
 
+byte *SND_GetPCMData(sfxHandle_t sfx, int *outLen, int *outRate, int *outBits, int *outChan) {
+    if (sfx < 0 || sfx >= sfx_count || !sfx_cache[sfx].loaded) {
+        if (outLen) *outLen = 0;
+        return NULL;
+    }
+    sfx_t *s = &sfx_cache[sfx];
+    if (outLen)  *outLen  = s->dataLen;
+    if (outRate) *outRate = s->sampleRate;
+    if (outBits) *outBits = s->bitsPerSample;
+    if (outChan) *outChan = s->channels;
+    return s->data;
+}
+
 void SND_StopAllSounds(void) {
 #ifdef USE_SDL2
     if (snd_backend.deviceId) {

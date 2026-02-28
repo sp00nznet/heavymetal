@@ -11,6 +11,7 @@
 #include "snd_local.h"
 #include "../common/qcommon.h"
 #include <string.h>
+#include <math.h>
 
 static qboolean snd_initialized = qfalse;
 
@@ -92,8 +93,17 @@ void S_AddLoopingSound(const vec3_t origin, const vec3_t velocity,
  * Registration
  * ========================================================================= */
 
+static qboolean snd_registering = qfalse;
+static int      snd_registrationSequence = 0;
+
 void S_BeginRegistration(void) {
-    /* Called at level start to begin sound precaching */
+    /* Begin a new level's sound precaching phase.
+     * Bumps the registration sequence so we can identify stale sounds
+     * from the previous level during EndRegistration. */
+    if (!snd_initialized) return;
+    snd_registering = qtrue;
+    snd_registrationSequence++;
+    Com_DPrintf("S_BeginRegistration: sequence %d\n", snd_registrationSequence);
 }
 
 sfxHandle_t S_RegisterSound(const char *name) {
@@ -102,7 +112,12 @@ sfxHandle_t S_RegisterSound(const char *name) {
 }
 
 void S_EndRegistration(void) {
-    /* Called after all sounds are precached */
+    /* End the precaching phase. Sounds not touched during this registration
+     * pass could be freed here, but for simplicity we keep them cached --
+     * memory pressure is lower with modern systems. */
+    if (!snd_initialized) return;
+    snd_registering = qfalse;
+    Com_DPrintf("S_EndRegistration: complete\n");
 }
 
 /* =========================================================================
@@ -349,10 +364,69 @@ float S_GetLipLength(const char *name) {
 }
 
 byte *S_GetLipAmplitudes(const char *name, int *number_of_amplitudes) {
-    (void)name;
-    if (number_of_amplitudes) *number_of_amplitudes = 0;
-    /* TODO: Generate amplitude envelope from PCM data */
-    return NULL;
+    if (!snd_initialized || !name || !number_of_amplitudes) {
+        if (number_of_amplitudes) *number_of_amplitudes = 0;
+        return NULL;
+    }
+
+    /* Register/load the sound to get PCM data */
+    sfxHandle_t sfx = SND_RegisterSound(name);
+    float duration = SND_SoundLength(sfx);
+    if (duration <= 0.0f) {
+        *number_of_amplitudes = 0;
+        return NULL;
+    }
+
+    /* Generate amplitude envelope at ~30 fps for lip sync.
+     * The Babble system uses this to drive mouth open/close. */
+    extern byte *SND_GetPCMData(sfxHandle_t sfx, int *outLen, int *outRate, int *outBits, int *outChan);
+    int dataLen, sampleRate, bitsPerSample, channels;
+    byte *pcm = SND_GetPCMData(sfx, &dataLen, &sampleRate, &bitsPerSample, &channels);
+    if (!pcm || dataLen <= 0 || sampleRate <= 0) {
+        *number_of_amplitudes = 0;
+        return NULL;
+    }
+
+    int bytesPerSample = (bitsPerSample / 8) * channels;
+    int totalSamples = dataLen / bytesPerSample;
+
+    /* 30 fps amplitude windows */
+    int framesPerWindow = sampleRate / 30;
+    if (framesPerWindow < 1) framesPerWindow = 1;
+    int numWindows = totalSamples / framesPerWindow;
+    if (numWindows < 1) numWindows = 1;
+
+    byte *amplitudes = (byte *)Z_TagMalloc(numWindows, TAG_GENERAL);
+
+    for (int w = 0; w < numWindows; w++) {
+        int startSample = w * framesPerWindow;
+        int endSample = startSample + framesPerWindow;
+        if (endSample > totalSamples) endSample = totalSamples;
+
+        /* Compute RMS amplitude for this window */
+        float sumSq = 0.0f;
+        int count = 0;
+        for (int s = startSample; s < endSample; s++) {
+            float sample;
+            if (bitsPerSample == 16) {
+                short *src = (short *)pcm;
+                sample = (float)src[s * channels] / 32768.0f;
+            } else {
+                sample = ((float)pcm[s * channels] - 128.0f) / 128.0f;
+            }
+            sumSq += sample * sample;
+            count++;
+        }
+
+        float rms = (count > 0) ? sqrtf(sumSq / count) : 0.0f;
+        /* Scale to 0-255 byte range with some amplification */
+        int val = (int)(rms * 4.0f * 255.0f);
+        if (val > 255) val = 255;
+        amplitudes[w] = (byte)val;
+    }
+
+    *number_of_amplitudes = numWindows;
+    return amplitudes;
 }
 
 /* =========================================================================
@@ -366,10 +440,8 @@ float S_SoundLength(const char *path) {
 }
 
 byte *S_SoundAmplitudes(const char *name, int *number_of_amplitudes) {
-    (void)name;
-    if (number_of_amplitudes) *number_of_amplitudes = 0;
-    /* TODO: Generate amplitude data for lip sync */
-    return NULL;
+    /* Game DLL variant -- delegates to the same lip sync implementation */
+    return S_GetLipAmplitudes(name, number_of_amplitudes);
 }
 
 /* =========================================================================

@@ -216,16 +216,41 @@ void Alias_ModelUpdateDialog(int modelindex, const char *alias,
                               int number_of_times_played,
                               byte been_played_this_loop,
                               int last_time_played) {
-    (void)modelindex; (void)alias;
-    (void)number_of_times_played; (void)been_played_this_loop;
-    (void)last_time_played;
+    /* Update playback tracking for a dialog alias (used for VO line
+     * repetition avoidance -- the game tracks how recently each line
+     * was played and avoids replaying the same line too soon). */
+    aliasEntry_t *e = Alias_Find(modelindex, alias);
+    if (!e) {
+        /* Try global */
+        e = Alias_Find(-1, alias);
+    }
+    if (!e) return;
+
+    /* Store dialog tracking data in the parameters field as packed state.
+     * Format: "played:<count> loop:<0|1> time:<ms>" */
+    snprintf(e->parameters, MAX_QPATH, "played:%d loop:%d time:%d",
+             number_of_times_played, (int)been_played_this_loop, last_time_played);
 }
 
 void Alias_ModelAddActorDialog(int modelindex, const char *alias,
                                 int actor_number, int number_of_times_played,
                                 byte been_played_this_loop,
                                 int last_time_played) {
-    (void)modelindex; (void)alias; (void)actor_number;
-    (void)number_of_times_played; (void)been_played_this_loop;
-    (void)last_time_played;
+    /* Register an actor-specific dialog entry. This associates a VO line
+     * alias with a particular NPC so the game can track per-actor playback.
+     * We create the alias if it doesn't exist, then update tracking. */
+    aliasEntry_t *e = Alias_Find(modelindex, alias);
+    if (!e) {
+        /* Create a new alias entry for this actor's dialog */
+        e = Alias_AllocEntry();
+        if (!e) return;
+        e->modelindex = modelindex;
+        Q_strncpyz(e->alias, alias, MAX_ALIAS_NAME);
+        e->numCandidates = 0;
+    }
+
+    /* Store actor/dialog tracking state */
+    snprintf(e->parameters, MAX_QPATH, "actor:%d played:%d loop:%d time:%d",
+             actor_number, number_of_times_played,
+             (int)been_played_this_loop, last_time_played);
 }

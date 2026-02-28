@@ -489,12 +489,25 @@ void SV_SetLightStyle(int i, const char *data) {
     R_SetLightStyle(i, sv_lightStyles[i]);
 }
 
+/* Server-side rendering state forwarded to renderer */
+static int sv_farPlane = 0;
+static qboolean sv_skyPortal = qfalse;
+
 void SV_SetFarPlane(int farplane) {
-    (void)farplane;
+    sv_farPlane = farplane;
+    /* Forward to renderer for LOD and fog clipping */
+    extern void R_SetFarClip(float dist);
+    R_SetFarClip((float)farplane);
 }
 
 void SV_SetSkyPortal(qboolean skyportal) {
-    (void)skyportal;
+    sv_skyPortal = skyportal;
+    /* Forward to renderer's sky system */
+    extern void R_SetSkyPortal(qboolean active, const vec3_t origin,
+                                const vec3_t axis[3], float alpha);
+    if (!skyportal) {
+        R_SetSkyPortal(qfalse, NULL, NULL, 0.0f);
+    }
 }
 
 void SV_DebugGraph(float value, int color) {
