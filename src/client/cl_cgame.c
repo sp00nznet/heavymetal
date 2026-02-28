@@ -148,6 +148,42 @@ static int              cl_currentSnapshot;
 int                     cl_currentServerTime;
 
 /* =========================================================================
+ * Reliable server command buffer
+ *
+ * Server commands queued via SV_SendServerCommand are stored here
+ * for the cgame to retrieve via CGI_GetServerCommand.
+ * ========================================================================= */
+
+#define MAX_RELIABLE_COMMANDS   128
+#define MAX_RELIABLE_CMD_LEN    1024
+
+static struct {
+    char    commands[MAX_RELIABLE_COMMANDS][MAX_RELIABLE_CMD_LEN];
+    int     writeIndex;
+    int     readIndex;
+} cl_reliableCmds;
+
+void CL_AddReliableCommand(const char *cmd) {
+    int idx = cl_reliableCmds.writeIndex % MAX_RELIABLE_COMMANDS;
+    Q_strncpyz(cl_reliableCmds.commands[idx], cmd, MAX_RELIABLE_CMD_LEN);
+    cl_reliableCmds.writeIndex++;
+}
+
+/* =========================================================================
+ * User command history (for cgame retrieval via CGI_GetUserCmd)
+ * ========================================================================= */
+
+#define MAX_CMD_HISTORY     64
+static usercmd_t    cl_cmdHistory[MAX_CMD_HISTORY];
+static int          cl_cmdNumber;
+
+void CL_RecordUserCmd(const usercmd_t *cmd) {
+    int idx = cl_cmdNumber % MAX_CMD_HISTORY;
+    cl_cmdHistory[idx] = *cmd;
+    cl_cmdNumber++;
+}
+
+/* =========================================================================
  * Snapshot reception -- called from server (loopback fast path)
  * ========================================================================= */
 
@@ -194,23 +230,51 @@ static void CGI_GetGlconfig(glconfig_t *glconfig) {
 }
 
 static qboolean CGI_GetParseEntityState(int parseEntityNumber, entityState_t *state) {
-    (void)parseEntityNumber; (void)state;
-    return qfalse;
+    if (!state) return qfalse;
+    if (parseEntityNumber < 0 || parseEntityNumber >= cl_snapshot.numEntities)
+        return qfalse;
+
+    *state = cl_snapshot.entities[parseEntityNumber];
+    return qtrue;
 }
 
 static int CGI_GetCurrentCmdNumber(void) {
-    return 0;
+    return cl_cmdNumber;
 }
 
 static qboolean CGI_GetUserCmd(int cmdNumber, usercmd_t *ucmd) {
-    (void)cmdNumber;
-    if (ucmd) memset(ucmd, 0, sizeof(*ucmd));
-    return qfalse;
+    if (!ucmd) return qfalse;
+
+    /* Check if the requested command is still in our history */
+    if (cmdNumber <= 0 || cmdNumber > cl_cmdNumber) {
+        memset(ucmd, 0, sizeof(*ucmd));
+        return qfalse;
+    }
+
+    int age = cl_cmdNumber - cmdNumber;
+    if (age >= MAX_CMD_HISTORY) {
+        memset(ucmd, 0, sizeof(*ucmd));
+        return qfalse;
+    }
+
+    int idx = cmdNumber % MAX_CMD_HISTORY;
+    *ucmd = cl_cmdHistory[idx];
+    return qtrue;
 }
 
 static qboolean CGI_GetServerCommand(int serverCommandNumber) {
-    (void)serverCommandNumber;
-    return qfalse;
+    if (serverCommandNumber < 0) return qfalse;
+
+    /* Check if the command exists in our buffer */
+    if (serverCommandNumber >= cl_reliableCmds.writeIndex) return qfalse;
+
+    int age = cl_reliableCmds.writeIndex - serverCommandNumber;
+    if (age > MAX_RELIABLE_COMMANDS) return qfalse;
+
+    int idx = serverCommandNumber % MAX_RELIABLE_COMMANDS;
+    /* Tokenize the command so cgame can read it via Cmd_Argc/Cmd_Argv */
+    Cmd_TokenizeString(cl_reliableCmds.commands[idx]);
+    return qtrue;
 }
 
 /* =========================================================================

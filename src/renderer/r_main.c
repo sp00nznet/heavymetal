@@ -358,8 +358,34 @@ void R_DrawStretchPic(float x, float y, float w, float h,
     extern void R_Set2D(void);
     R_Set2D();
 
-    /* TODO: Bind shader texture via hShader */
-    (void)hShader;
+    /* Bind shader's first-stage texture if available */
+    if (hShader > 0) {
+        extern void *R_GetShaderByHandle(int h);
+        /* The shader has a GL texture in stages[0].image if loaded.
+         * For now, we can get the image handle from the shader system. */
+        typedef struct {
+            char        name[MAX_QPATH];
+            int         index;
+            int         sortOrder;
+            qboolean    defaultShader;
+            qboolean    isSky;
+            qboolean    isPortal;
+            int         cullType;
+            qboolean    polygonOffset;
+            int         surfaceFlags;
+            int         contentFlags;
+            int         numStages;
+            struct {
+                qboolean    active;
+                qhandle_t   image;
+            } stages[8];
+        } shaderRef_t;
+        shaderRef_t *sh = (shaderRef_t *)R_GetShaderByHandle(hShader);
+        if (sh && sh->numStages > 0 && sh->stages[0].image > 0) {
+            glEnable(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D, sh->stages[0].image);
+        }
+    }
 
     glColor4fv(r_currentColor);
     glBegin(GL_QUADS);

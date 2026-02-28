@@ -234,10 +234,105 @@ float R_ModelRadius(clipHandle_t model) {
  * Skin registration (TIKI surface material overrides)
  * ========================================================================= */
 
+/* =========================================================================
+ * Skin file parsing
+ *
+ * .skin files map surface names to shader/material names. Format:
+ *   surfacename,shaders/materialname
+ *   surfacename2,shaders/materialname2
+ *
+ * Used by TIKI models for character variants (e.g., damaged skins).
+ * ========================================================================= */
+
+#define MAX_SKINS           256
+#define MAX_SKIN_SURFACES   32
+
+typedef struct {
+    char    surfaceName[MAX_QPATH];
+    char    shaderName[MAX_QPATH];
+} skinSurface_t;
+
+typedef struct {
+    char            name[MAX_QPATH];
+    int             numSurfaces;
+    skinSurface_t   surfaces[MAX_SKIN_SURFACES];
+} skin_t;
+
+static skin_t   r_skins[MAX_SKINS];
+static int      r_numSkins;
+
 qhandle_t R_RegisterSkin(const char *name) {
-    Com_DPrintf("R_RegisterSkin: %s\n", name);
-    /* TODO: Parse .skin file (maps surface names to shader names) */
-    return 0;
+    if (!name || !name[0]) return 0;
+
+    /* Check cache */
+    for (int i = 0; i < r_numSkins; i++) {
+        if (!Q_stricmp(r_skins[i].name, name)) return i + 1;
+    }
+
+    if (r_numSkins >= MAX_SKINS) {
+        Com_Printf("R_RegisterSkin: MAX_SKINS hit\n");
+        return 0;
+    }
+
+    /* Load skin file */
+    void *buffer;
+    long len = FS_ReadFile(name, &buffer);
+    if (len <= 0 || !buffer) {
+        Com_DPrintf("R_RegisterSkin: couldn't load '%s'\n", name);
+        return 0;
+    }
+
+    skin_t *skin = &r_skins[r_numSkins];
+    memset(skin, 0, sizeof(*skin));
+    Q_strncpyz(skin->name, name, sizeof(skin->name));
+
+    /* Parse line by line: "surfacename,shadername" */
+    const char *text = (const char *)buffer;
+    while (*text && skin->numSurfaces < MAX_SKIN_SURFACES) {
+        /* Skip whitespace and blank lines */
+        while (*text == '\r' || *text == '\n' || *text == ' ' || *text == '\t') text++;
+        if (!*text) break;
+        if (*text == '#' || *text == '/') {
+            /* Skip comment line */
+            while (*text && *text != '\n') text++;
+            continue;
+        }
+
+        /* Read surface name up to comma */
+        char surfName[MAX_QPATH];
+        int si = 0;
+        while (*text && *text != ',' && *text != '\r' && *text != '\n' && si < MAX_QPATH - 1)
+            surfName[si++] = *text++;
+        surfName[si] = '\0';
+
+        /* Skip comma */
+        if (*text == ',') text++;
+
+        /* Read shader name up to end of line */
+        char shaderName[MAX_QPATH];
+        int shi = 0;
+        while (*text && *text != '\r' && *text != '\n' && shi < MAX_QPATH - 1)
+            shaderName[shi++] = *text++;
+        shaderName[shi] = '\0';
+
+        /* Trim trailing whitespace from shader name */
+        while (shi > 0 && (shaderName[shi-1] == ' ' || shaderName[shi-1] == '\t'))
+            shaderName[--shi] = '\0';
+
+        if (surfName[0] && shaderName[0]) {
+            skinSurface_t *ss = &skin->surfaces[skin->numSurfaces++];
+            Q_strncpyz(ss->surfaceName, surfName, sizeof(ss->surfaceName));
+            Q_strncpyz(ss->shaderName, shaderName, sizeof(ss->shaderName));
+        }
+    }
+
+    FS_FreeFile(buffer);
+
+    int handle = r_numSkins + 1;  /* 0 = no skin */
+    r_numSkins++;
+
+    Com_DPrintf("R_RegisterSkin: '%s' (%d surfaces)\n", name, skin->numSurfaces);
+    return handle;
 }
 
 /* =========================================================================

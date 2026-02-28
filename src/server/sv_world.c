@@ -325,6 +325,22 @@ void SV_GetUserinfo(int index, char *buffer, int bufferSize) {
  * Server commands
  * ========================================================================= */
 
+/* =========================================================================
+ * Server command queue
+ *
+ * Commands are queued and dispatched to connected clients during
+ * the next snapshot. For single-player loopback, we forward them
+ * directly to the client's reliable command buffer.
+ * ========================================================================= */
+
+#define MAX_SV_COMMANDS     64
+#define MAX_SV_COMMAND_LEN  1024
+
+static struct {
+    char    commands[MAX_SV_COMMANDS][MAX_SV_COMMAND_LEN];
+    int     numCommands;
+} sv_cmdQueue;
+
 void SV_SendServerCommand(int clientnum, const char *fmt, ...) {
     va_list args;
     char buf[4096];
@@ -332,8 +348,19 @@ void SV_SendServerCommand(int clientnum, const char *fmt, ...) {
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
-    /* TODO: Actually queue command for transmission to client */
     Com_DPrintf("SV_SendServerCommand(%d): %s\n", clientnum, buf);
+
+    /* Queue the command */
+    if (sv_cmdQueue.numCommands < MAX_SV_COMMANDS) {
+        Q_strncpyz(sv_cmdQueue.commands[sv_cmdQueue.numCommands],
+                    buf, MAX_SV_COMMAND_LEN);
+        sv_cmdQueue.numCommands++;
+    }
+
+    /* For loopback (single-player), also execute immediately on client side.
+     * The cgame retrieves these via CGI_GetServerCommand. */
+    extern void CL_AddReliableCommand(const char *cmd);
+    CL_AddReliableCommand(buf);
 }
 
 /* =========================================================================
@@ -444,9 +471,18 @@ void SV_SetModel(gentity_t *ent, const char *name) {
     }
 }
 
+/* Light style storage -- transmitted to clients and forwarded to renderer */
+#define MAX_SERVER_LIGHTSTYLES 64
+static char sv_lightStyles[MAX_SERVER_LIGHTSTYLES][64];
+
 void SV_SetLightStyle(int i, const char *data) {
-    /* TODO: Store light style data for transmission to clients */
-    (void)i; (void)data;
+    if (i < 0 || i >= MAX_SERVER_LIGHTSTYLES) return;
+
+    Q_strncpyz(sv_lightStyles[i], data ? data : "m", sizeof(sv_lightStyles[0]));
+
+    /* Forward to renderer for immediate use */
+    extern void R_SetLightStyle(int style, const char *data);
+    R_SetLightStyle(i, sv_lightStyles[i]);
 }
 
 void SV_SetFarPlane(int farplane) {
