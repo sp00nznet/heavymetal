@@ -172,7 +172,17 @@ static qboolean Cmd_PlaySound(scriptThread_t *thread, scriptArgs_t *args) {
     if (args->argc < 2) return qtrue;
     Com_DPrintf("Script[%d]: playsound %s (entity %d)\n",
                thread->id, args->argv[1], thread->entityNum);
-    /* TODO: S_StartSound with entity origin */
+
+    extern sfxHandle_t S_RegisterSound(const char *name);
+    extern void S_StartSound(vec3_t origin, int entnum, int entchannel,
+                              sfxHandle_t sfx, float volume, float minDist,
+                              float pitch, float maxDist);
+
+    sfxHandle_t sfx = S_RegisterSound(args->argv[1]);
+    if (sfx > 0) {
+        /* Channel 0 = auto, volume 1.0, standard spatialization */
+        S_StartSound(NULL, thread->entityNum, 0, sfx, 1.0f, 100.0f, 1.0f, 2000.0f);
+    }
     return qtrue;
 }
 

@@ -309,6 +309,27 @@ int FS_FOpenFileWrite(const char *filename, fileHandle_t *file) {
     return 0;
 }
 
+int FS_FOpenFileAppend(const char *filename, fileHandle_t *file) {
+    char ospath[MAX_OSPATH];
+
+    if (!filename || !file) return -1;
+    *file = 0;
+
+    FS_BuildOSPath(ospath, sizeof(ospath), fs_basepath, fs_gamedir, filename);
+
+    FILE *fp = fopen(ospath, "ab");
+    if (!fp) {
+        Com_Printf("FS_FOpenFileAppend: failed to open %s\n", ospath);
+        return -1;
+    }
+
+    fileHandle_t h = FS_AllocHandle();
+    fs_handles[h].fp = fp;
+    fs_handles[h].is_pk3 = qfalse;
+    *file = h;
+    return 0;
+}
+
 void FS_FCloseFile(fileHandle_t f) {
     fs_handle_t *fh = FS_GetHandle(f);
     if (!fh) return;

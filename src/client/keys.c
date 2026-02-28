@@ -280,7 +280,17 @@ void Key_KeyEvent(int key, qboolean down, unsigned int time) {
             key_catcher = KEY_GAME;
             return;
         }
-        /* TODO: Toggle menu */
+        /* Toggle menu state */
+        if (key_catcher == KEY_MENU) {
+            /* Close menu -> return to game */
+            key_catcher = KEY_GAME;
+            Com_DPrintf("Menu closed\n");
+        } else {
+            /* Open menu */
+            key_catcher = KEY_MENU;
+            Com_DPrintf("Menu opened\n");
+        }
+        return;
     }
 
     /* If console is active, feed keys to console */

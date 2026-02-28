@@ -247,6 +247,10 @@ void R_RenderScene(const refdef_t *fd) {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
 
+    /* Setup frustum culling planes */
+    extern void R_SetupFrustum(const refdef_t *fd);
+    R_SetupFrustum(fd);
+
     /* Draw sky */
     extern void R_DrawSky(const vec3_t viewOrigin);
     R_DrawSky(fd->vieworg);

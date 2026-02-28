@@ -313,14 +313,26 @@ void MUSIC_UpdateVolume(float volume, float fade_time) {
  * Reverb and ambient volume
  * ========================================================================= */
 
+/* Current reverb state -- stored for the sound mixer.
+ * Full reverb DSP requires an effects pipeline; for now we store the
+ * state so it can be queried by the mixer when DSP is added later. */
+static int   s_reverbType = 0;
+static float s_reverbLevel = 0.0f;
+
 void S_SetReverb(int reverb_type, float reverb_level) {
-    (void)reverb_type; (void)reverb_level;
-    /* TODO: Apply reverb effect via SDL2 or OpenAL */
+    s_reverbType = reverb_type;
+    s_reverbLevel = reverb_level;
+    Com_DPrintf("S_SetReverb: type=%d level=%.2f\n", reverb_type, reverb_level);
 }
 
+/* Global ambient volume scale (0.0 - 1.0) applied to all looping sounds */
+static float s_ambientVolume = 1.0f;
+
 void S_SetGlobalAmbientVolumeLevel(float volume) {
-    (void)volume;
-    /* TODO: Scale ambient sound volumes */
+    s_ambientVolume = volume;
+    if (s_ambientVolume < 0.0f) s_ambientVolume = 0.0f;
+    if (s_ambientVolume > 1.0f) s_ambientVolume = 1.0f;
+    Com_DPrintf("S_SetGlobalAmbientVolumeLevel: %.2f\n", volume);
 }
 
 /* =========================================================================

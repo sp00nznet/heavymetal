@@ -141,9 +141,9 @@ static fileHandle_t GI_FS_FOpenFileWrite(const char *qpath) {
 }
 
 static fileHandle_t GI_FS_FOpenFileAppend(const char *filename) {
-    /* TODO: Append mode not yet implemented, fall back to write */
+    extern int FS_FOpenFileAppend(const char *filename, fileHandle_t *file);
     fileHandle_t f;
-    FS_FOpenFileWrite(filename, &f);
+    FS_FOpenFileAppend(filename, &f);
     return f;
 }
 

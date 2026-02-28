@@ -657,7 +657,13 @@ void Ghost_SetEmitterAngles(ghostEmitter_t emitter, const vec3_t angles) {
     if (emitter < 0 || emitter >= GHOST_MAX_EMITTERS_ACTIVE) return;
     if (!ghost_emitters[emitter].active) return;
     VectorCopy(angles, ghost_emitters[emitter].angles);
-    /* TODO: Build axis matrix from angles */
+
+    /* Build orientation axis matrix from Euler angles */
+    vec3_t forward, right, up;
+    AngleVectors(angles, forward, right, up);
+    VectorCopy(forward, ghost_emitters[emitter].axis[0]);
+    VectorCopy(right, ghost_emitters[emitter].axis[1]);
+    VectorCopy(up, ghost_emitters[emitter].axis[2]);
 }
 
 void Ghost_AttachToTag(ghostEmitter_t emitter, int entity_num, int tag_index) {

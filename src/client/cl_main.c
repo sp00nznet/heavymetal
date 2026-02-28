@@ -257,9 +257,40 @@ void CL_Init(void) {
     memset(&cls, 0, sizeof(cls));
     cls.state = CA_DISCONNECTED;
 
-    /* Create window first -- renderer needs it */
-    /* TODO: Read r_mode, r_fullscreen cvars */
-    Win_Create(1024, 768, qfalse);
+    /* Read video mode cvars for window setup */
+    cvar_t *r_mode = Cvar_Get("r_mode", "4", CVAR_ARCHIVE);
+    cvar_t *r_fullscreen = Cvar_Get("r_fullscreen", "0", CVAR_ARCHIVE);
+    cvar_t *r_customwidth = Cvar_Get("r_customwidth", "1280", CVAR_ARCHIVE);
+    cvar_t *r_customheight = Cvar_Get("r_customheight", "720", CVAR_ARCHIVE);
+
+    /* Standard mode table matching Q3/FAKK2 r_mode values */
+    int vidWidth = 1024, vidHeight = 768;
+    switch (r_mode->integer) {
+        case 0: vidWidth = 320;  vidHeight = 240;  break;
+        case 1: vidWidth = 400;  vidHeight = 300;  break;
+        case 2: vidWidth = 512;  vidHeight = 384;  break;
+        case 3: vidWidth = 640;  vidHeight = 480;  break;
+        case 4: vidWidth = 800;  vidHeight = 600;  break;
+        case 5: vidWidth = 960;  vidHeight = 720;  break;
+        case 6: vidWidth = 1024; vidHeight = 768;  break;
+        case 7: vidWidth = 1152; vidHeight = 864;  break;
+        case 8: vidWidth = 1280; vidHeight = 1024; break;
+        case 9: vidWidth = 1600; vidHeight = 1200; break;
+        case 10: vidWidth = 1920; vidHeight = 1080; break;
+        case 11: vidWidth = 2560; vidHeight = 1440; break;
+        case -1: /* Custom mode */
+            vidWidth = r_customwidth->integer;
+            vidHeight = r_customheight->integer;
+            break;
+    }
+    if (vidWidth < 320) vidWidth = 320;
+    if (vidHeight < 240) vidHeight = 240;
+
+    qboolean fullscreen = r_fullscreen->integer ? qtrue : qfalse;
+    Com_Printf("Video: %dx%d %s (r_mode %d)\n",
+               vidWidth, vidHeight, fullscreen ? "fullscreen" : "windowed",
+               r_mode->integer);
+    Win_Create(vidWidth, vidHeight, fullscreen);
 
     /* Initialize renderer */
     R_Init();
