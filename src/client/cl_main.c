@@ -153,7 +153,35 @@ void CL_LoadMap(const char *mapname) {
     R_BeginRegistration();
     R_LoadWorldMap(mapname);
 
-    /* TODO: Precache models, sounds, images from configstrings */
+    /* Precache models, sounds, images from server configstrings */
+    {
+        extern char *SV_GetConfigstring(int index);
+        extern qhandle_t R_RegisterModel(const char *name);
+        extern sfxHandle_t S_RegisterSound(const char *name);
+
+        #define CS_MODELS_CL   32
+        #define CS_SOUNDS_CL   (CS_MODELS_CL + 256)
+
+        /* Precache models */
+        for (int i = 1; i < 256; i++) {
+            const char *cs = SV_GetConfigstring(CS_MODELS_CL + i);
+            if (cs[0]) {
+                R_RegisterModel(cs);
+                cls.loadingPercent = 0.1f + 0.4f * ((float)i / 256.0f);
+            }
+        }
+
+        /* Precache sounds */
+        for (int i = 1; i < 256; i++) {
+            const char *cs = SV_GetConfigstring(CS_SOUNDS_CL + i);
+            if (cs[0]) {
+                S_RegisterSound(cs);
+                cls.loadingPercent = 0.5f + 0.4f * ((float)i / 256.0f);
+            }
+        }
+
+        cls.loadingPercent = 0.95f;
+    }
 
     R_EndRegistration();
 
@@ -168,6 +196,10 @@ void CL_LoadMap(const char *mapname) {
 
     cls.state = CA_ACTIVE;
     Com_Printf("Map loaded: %s\n", mapname);
+}
+
+float CL_GetLoadingPercent(void) {
+    return cls.loadingPercent;
 }
 
 /* =========================================================================

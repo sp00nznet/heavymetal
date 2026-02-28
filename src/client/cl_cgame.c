@@ -106,7 +106,37 @@ static void CGI_FS_WriteTextFile(const char *qpath, const void *buffer, int size
 }
 
 static void CGI_UpdateLoadingScreen(void) {
-    /* TODO: Redraw loading screen during level load */
+    /* Render a loading progress bar during level load.
+     * Called by the game DLL during resource precaching so the
+     * user sees visual feedback instead of a frozen screen. */
+    extern void R_Set2D(void);
+    extern void R_DrawFillRect(float x, float y, float w, float h,
+                                float r, float g, float b, float a);
+    extern void R_DrawString(float x, float y, const char *str,
+                              float scale, float r, float g, float b, float a);
+    extern void R_BeginFrame(void);
+    extern void R_EndFrame(void);
+
+    R_BeginFrame();
+    R_Set2D();
+
+    /* Dark background */
+    R_DrawFillRect(0, 0, 1280, 720, 0.0f, 0.0f, 0.0f, 1.0f);
+
+    /* Loading text */
+    R_DrawString(520, 300, "Loading...", 2.0f, 1.0f, 0.8f, 0.3f, 1.0f);
+
+    /* Progress bar background */
+    R_DrawFillRect(290, 360, 700, 20, 0.2f, 0.2f, 0.2f, 1.0f);
+
+    /* Progress bar fill -- use cls.loadingPercent from cl_main */
+    extern float CL_GetLoadingPercent(void);
+    float pct = CL_GetLoadingPercent();
+    if (pct > 0.0f) {
+        R_DrawFillRect(292, 362, 696 * pct, 16, 0.8f, 0.5f, 0.1f, 1.0f);
+    }
+
+    R_EndFrame();
 }
 
 static void CGI_AddCommand(const char *cmd) {

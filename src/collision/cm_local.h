@@ -181,6 +181,7 @@ int         CM_LeafCluster(int leafnum);
 int         CM_LeafArea(int leafnum);
 
 const char  *CM_EntityString(void);
+void        CM_ModelBounds(clipHandle_t model, vec3_t mins, vec3_t maxs);
 
 #ifdef __cplusplus
 }

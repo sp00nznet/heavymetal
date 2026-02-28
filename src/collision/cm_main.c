@@ -305,6 +305,16 @@ const char *CM_EntityString(void) {
     return cm.entityString ? cm.entityString : "";
 }
 
+void CM_ModelBounds(clipHandle_t model, vec3_t mins, vec3_t maxs) {
+    if (model < 0 || model >= cm.numSubModels) {
+        VectorClear(mins);
+        VectorClear(maxs);
+        return;
+    }
+    VectorCopy(cm.subModels[model].mins, mins);
+    VectorCopy(cm.subModels[model].maxs, maxs);
+}
+
 /* =========================================================================
  * CM_TempBoxModel -- create a temporary box brush for entity collision
  *
@@ -439,8 +449,17 @@ int CM_TransformedPointContents(const vec3_t p, clipHandle_t model,
     vec3_t local;
     VectorSubtract(p, origin, local);
 
-    /* TODO: Handle rotation via angles (for rotated brush entities) */
-    (void)angles;
+    /* Handle rotation via angles for rotated brush entities */
+    if (angles[0] || angles[1] || angles[2]) {
+        vec3_t forward, right, up;
+        AngleVectors(angles, forward, right, up);
+
+        vec3_t temp;
+        VectorCopy(local, temp);
+        local[0] = DotProduct(temp, forward);
+        local[1] = -DotProduct(temp, right);
+        local[2] = DotProduct(temp, up);
+    }
 
     return CM_PointContents(local, model);
 }
@@ -689,14 +708,42 @@ void CM_TransformedBoxTrace(trace_t *results, const vec3_t start, const vec3_t e
     VectorSubtract(start, origin, localStart);
     VectorSubtract(end, origin, localEnd);
 
-    /* TODO: Handle rotation via angles (for rotated brush entities) */
-    (void)angles;
+    /* Handle rotation via angles for rotated brush entities */
+    qboolean rotated = (angles[0] || angles[1] || angles[2]);
+    vec3_t forward, right, up;
+    if (rotated) {
+        AngleVectors(angles, forward, right, up);
+
+        vec3_t temp;
+        VectorCopy(localStart, temp);
+        localStart[0] = DotProduct(temp, forward);
+        localStart[1] = -DotProduct(temp, right);
+        localStart[2] = DotProduct(temp, up);
+
+        VectorCopy(localEnd, temp);
+        localEnd[0] = DotProduct(temp, forward);
+        localEnd[1] = -DotProduct(temp, right);
+        localEnd[2] = DotProduct(temp, up);
+    }
 
     CM_BoxTrace(results, localStart, localEnd, mins, maxs, model, brushmask, cylinder);
 
-    /* Transform result back to world space */
-    VectorAdd(results->endpos, origin, results->endpos);
-}
+    if (rotated && results->fraction < 1.0f) {
+        /* Rotate the surface normal back to world space */
+        vec3_t temp;
+        VectorCopy(results->plane.normal, temp);
+        results->plane.normal[0] = temp[0] * forward[0] - temp[1] * right[0] + temp[2] * up[0];
+        results->plane.normal[1] = temp[0] * forward[1] - temp[1] * right[1] + temp[2] * up[1];
+        results->plane.normal[2] = temp[0] * forward[2] - temp[1] * right[2] + temp[2] * up[2];
+    }
+
+    /* Transform endpos back to world space */
+    if (results->fraction == 1.0f) {
+        VectorCopy(end, results->endpos);
+    } else {
+        for (int i = 0; i < 3; i++)
+            results->endpos[i] = start[i] + results->fraction * (end[i] - start[i]);
+    }
 
 /* =========================================================================
  * PVS queries
@@ -743,12 +790,200 @@ qboolean CM_AreasConnected(int area1, int area2) {
  * Mark fragments (for decals/bullet impacts)
  * ========================================================================= */
 
+/*
+ * CM_MarkFragments -- project a polygon along a direction onto BSP surfaces.
+ * Used for bullet hole decals, blood splatters, scorch marks, etc.
+ *
+ * 1. For each BSP surface, check if the projection direction intersects it.
+ * 2. Clip the projected polygon against the surface's triangle boundaries.
+ * 3. Output clipped fragments into pointBuffer/fragmentBuffer.
+ *
+ * Returns the number of valid fragments produced.
+ */
+
+/* Clip polygon by plane, Sutherland-Hodgman style */
+static int CM_ClipPolyByPlane(const vec3_t *in, int numIn, vec3_t *out,
+                               const vec3_t normal, float dist) {
+    float dists[64];
+    int sides[64];
+    int numOut = 0;
+
+    if (numIn > 62) numIn = 62;
+
+    for (int i = 0; i < numIn; i++) {
+        dists[i] = DotProduct(in[i], normal) - dist;
+        sides[i] = (dists[i] > 0.1f) ? 1 : (dists[i] < -0.1f) ? -1 : 0;
+    }
+    dists[numIn] = dists[0];
+    sides[numIn] = sides[0];
+
+    for (int i = 0; i < numIn; i++) {
+        if (sides[i] >= 0) {
+            VectorCopy(in[i], out[numOut]);
+            numOut++;
+        }
+        if (sides[i] == 0 || sides[i + 1] == 0) continue;
+        if (sides[i] != sides[i + 1]) {
+            /* Edge crosses the plane */
+            int next = (i + 1) % numIn;
+            float d = dists[i] / (dists[i] - dists[next]);
+            for (int j = 0; j < 3; j++)
+                out[numOut][j] = in[i][j] + d * (in[next][j] - in[i][j]);
+            numOut++;
+        }
+        if (numOut >= 62) break;
+    }
+    return numOut;
+}
+
 int CM_MarkFragments(int numPoints, const vec3_t *points, const vec3_t projection,
                      int maxPoints, vec3_t pointBuffer, int maxFragments,
                      markFragment_t *fragmentBuffer) {
-    /* TODO: Clip projection polygon against BSP surfaces */
-    (void)numPoints; (void)points; (void)projection;
-    (void)maxPoints; (void)pointBuffer;
-    (void)maxFragments; (void)fragmentBuffer;
-    return 0;
+    if (numPoints < 3 || !points || !pointBuffer || !fragmentBuffer) return 0;
+    if (maxPoints < 3 || maxFragments < 1) return 0;
+
+    /* Compute bounding box of the projected polygon for early rejection */
+    vec3_t projMins, projMaxs;
+    VectorCopy(points[0], projMins);
+    VectorCopy(points[0], projMaxs);
+    for (int i = 1; i < numPoints; i++) {
+        for (int j = 0; j < 3; j++) {
+            if (points[i][j] < projMins[j]) projMins[j] = points[i][j];
+            if (points[i][j] > projMaxs[j]) projMaxs[j] = points[i][j];
+        }
+    }
+    /* Extend bounds by projection vector */
+    for (int j = 0; j < 3; j++) {
+        if (projection[j] < 0) projMins[j] += projection[j];
+        else projMaxs[j] += projection[j];
+    }
+
+    /* Get BSP world surface data via r_bsp.c */
+    extern void *R_GetBSPWorldPtr(void);
+    typedef struct {
+        char        name[MAX_QPATH];
+        dheader_t   header;
+        int         numShaders;
+        dshader_t   *shaders;
+        int         np; dplane_t *pl;
+        int         nn; dnode_t *nd;
+        int         nl; dleaf_t *lf;
+        int         nls; int *ls;
+        int         nlb; int *lb;
+        int         nm; dmodel_t *models;
+        int         nb; dbrush_t *br;
+        int         nbs; dbrushside_t *brs;
+        int         numSurfaces; dsurface_t *surfaces;
+        int         numVerts; drawVert_t *verts;
+        int         numIndexes; int *indexes;
+    } bspRef_t;
+
+    bspRef_t *world = (bspRef_t *)R_GetBSPWorldPtr();
+    if (!world || !world->surfaces || !world->verts || !world->indexes) return 0;
+
+    int returnedFragments = 0;
+    int returnedPoints = 0;
+
+    /* Get world model surface range */
+    int firstSurf = 0, numSurfs = world->numSurfaces;
+    if (world->models && world->nm > 0) {
+        firstSurf = world->models[0].firstSurface;
+        numSurfs = world->models[0].numSurfaces;
+    }
+
+    /* Iterate BSP surfaces */
+    for (int s = 0; s < numSurfs; s++) {
+        int idx = firstSurf + s;
+        if (idx < 0 || idx >= world->numSurfaces) continue;
+
+        const dsurface_t *surf = &world->surfaces[idx];
+        if (surf->surfaceType != MST_PLANAR && surf->surfaceType != MST_TRIANGLE_SOUP)
+            continue;
+        if (surf->numVerts < 3 || surf->numIndexes < 3) continue;
+
+        /* Check shader flags -- skip nomarks surfaces */
+        if (surf->shaderNum >= 0 && surf->shaderNum < world->numShaders) {
+            if (world->shaders[surf->shaderNum].surfaceFlags & SURF_NOMARKS)
+                continue;
+        }
+
+        /* Use surface normal from first triangle */
+        const drawVert_t *sv = &world->verts[surf->firstVert];
+        vec3_t surfNormal;
+        VectorCopy(sv[0].normal, surfNormal);
+        float surfDist = DotProduct(sv[0].xyz, surfNormal);
+
+        /* Check if projection direction faces the surface */
+        float projDot = DotProduct(projection, surfNormal);
+        if (projDot > -0.01f) continue;  /* only mark back-facing from projection */
+
+        /* Project input points onto the surface plane along projection direction */
+        vec3_t projected[64];
+        int numProj = numPoints > 62 ? 62 : numPoints;
+        for (int i = 0; i < numProj; i++) {
+            float d = DotProduct(points[i], surfNormal) - surfDist;
+            float t = d / (-projDot);
+            if (t < -0.5f || t > 1.5f) goto nextSurface;
+            for (int j = 0; j < 3; j++)
+                projected[i][j] = points[i][j] + t * projection[j];
+        }
+
+        /* Clip the projected polygon against each triangle of the surface */
+        for (int t = 0; t < surf->numIndexes - 2; t += 3) {
+            const int *si = &world->indexes[surf->firstIndex + t];
+            const drawVert_t *v0 = &sv[si[0]];
+            const drawVert_t *v1 = &sv[si[1]];
+            const drawVert_t *v2 = &sv[si[2]];
+
+            /* Build triangle edge planes for clipping */
+            vec3_t edge, edgeNormal;
+            vec3_t clipped[64], temp[64];
+            int nClip = numProj;
+            memcpy(clipped, projected, numProj * sizeof(vec3_t));
+
+            /* Edge 0->1 */
+            VectorSubtract(v1->xyz, v0->xyz, edge);
+            CrossProduct(surfNormal, edge, edgeNormal);
+            VectorNormalize(edgeNormal);
+            float eDist = DotProduct(v0->xyz, edgeNormal);
+            nClip = CM_ClipPolyByPlane(clipped, nClip, temp, edgeNormal, eDist);
+            if (nClip < 3) continue;
+            memcpy(clipped, temp, nClip * sizeof(vec3_t));
+
+            /* Edge 1->2 */
+            VectorSubtract(v2->xyz, v1->xyz, edge);
+            CrossProduct(surfNormal, edge, edgeNormal);
+            VectorNormalize(edgeNormal);
+            eDist = DotProduct(v1->xyz, edgeNormal);
+            nClip = CM_ClipPolyByPlane(clipped, nClip, temp, edgeNormal, eDist);
+            if (nClip < 3) continue;
+            memcpy(clipped, temp, nClip * sizeof(vec3_t));
+
+            /* Edge 2->0 */
+            VectorSubtract(v0->xyz, v2->xyz, edge);
+            CrossProduct(surfNormal, edge, edgeNormal);
+            VectorNormalize(edgeNormal);
+            eDist = DotProduct(v2->xyz, edgeNormal);
+            nClip = CM_ClipPolyByPlane(clipped, nClip, temp, edgeNormal, eDist);
+            if (nClip < 3) continue;
+
+            /* Output this fragment */
+            if (returnedPoints + nClip > maxPoints) goto done;
+            if (returnedFragments >= maxFragments) goto done;
+
+            markFragment_t *mf = &fragmentBuffer[returnedFragments++];
+            mf->firstPoint = returnedPoints;
+            mf->numPoints = nClip;
+
+            for (int p = 0; p < nClip; p++) {
+                VectorCopy(temp[p], pointBuffer[returnedPoints]);
+                returnedPoints++;
+            }
+        }
+
+        nextSurface:;
+    }
+
+done:
+    return returnedFragments;
 }

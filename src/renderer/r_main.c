@@ -96,10 +96,17 @@ void R_Init(void) {
     R_InitSurfaces();
     R_InitLighting();
     R_InitSky();
+
+    extern void R_InitFont(void);
+    R_InitFont();
 }
 
 void R_Shutdown(void) {
     Com_Printf("--- R_Shutdown ---\n");
+
+    extern void R_ShutdownFont(void);
+    R_ShutdownFont();
+
     R_ShutdownSky();
     R_ShutdownLighting();
     R_ShutdownSurfaces();

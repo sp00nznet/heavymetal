@@ -142,8 +142,12 @@ void SV_SetBrushModel(gentity_t *ent, const char *name) {
     ent->s.modelindex = modelIndex;
 
     clipHandle_t h = CM_InlineModel(modelIndex);
-    /* TODO: Get bounds from CM submodel and set ent->mins/maxs */
-    (void)h;
+
+    /* Get bounds from collision model submodel */
+    vec3_t cmMins, cmMaxs;
+    CM_ModelBounds(h, cmMins, cmMaxs);
+    VectorCopy(cmMins, ent->mins);
+    VectorCopy(cmMaxs, ent->maxs);
 }
 
 /* =========================================================================

@@ -153,10 +153,23 @@ static qboolean R_LoadBrushModel(model_t *mod, const char *name) {
     }
 
     mod->type = MOD_BRUSH;
-    /* TODO: Copy bounding info from BSP submodel data */
-    VectorSet(mod->mins, -32, -32, -32);
-    VectorSet(mod->maxs, 32, 32, 32);
-    mod->radius = 46.0f;
+
+    /* Get bounds from BSP submodel data */
+    extern void *R_GetBSPWorldPtr(void);
+    typedef struct { char n[MAX_QPATH]; int h; int ns; void *sh; int np; void *pl;
+        int nn; void *nd; int nl; void *lf; int nls; int *ls; int nlb; int *lb;
+        int nm; dmodel_t *models; } bspRef2_t;
+    bspRef2_t *w = (bspRef2_t *)R_GetBSPWorldPtr();
+    if (w && w->models && submodelIdx < w->nm) {
+        VectorCopy(w->models[submodelIdx].mins, mod->mins);
+        VectorCopy(w->models[submodelIdx].maxs, mod->maxs);
+    } else {
+        VectorSet(mod->mins, -32, -32, -32);
+        VectorSet(mod->maxs, 32, 32, 32);
+    }
+    vec3_t size;
+    VectorSubtract(mod->maxs, mod->mins, size);
+    mod->radius = VectorLength(size) * 0.5f;
     mod->loaded = qtrue;
 
     return qtrue;

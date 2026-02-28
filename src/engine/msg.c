@@ -345,22 +345,405 @@ void MSG_ReadData(msg_t *msg, void *data, int length) {
  * indicates which fields are present in the message.
  * ========================================================================= */
 
+/*
+ * Delta encoding uses a field table describing each field's offset and size.
+ * A bitmask indicates which fields changed; only those are transmitted.
+ * This matches the Q3/FAKK2 network protocol for snapshot compatibility.
+ */
+
+typedef struct {
+    int     offset;
+    int     bits;       /* 0 = float, positive = int bits, negative = signed int */
+} netField_t;
+
+#define ESF(x)  (int)(size_t)&((entityState_t *)0)->x
+
+static const netField_t entityStateFields[] = {
+    { ESF(pos.trType),          8 },
+    { ESF(pos.trTime),          32 },
+    { ESF(pos.trDuration),      32 },
+    { ESF(pos.trBase[0]),       0 },
+    { ESF(pos.trBase[1]),       0 },
+    { ESF(pos.trBase[2]),       0 },
+    { ESF(pos.trDelta[0]),      0 },
+    { ESF(pos.trDelta[1]),      0 },
+    { ESF(pos.trDelta[2]),      0 },
+    { ESF(apos.trType),         8 },
+    { ESF(apos.trTime),         32 },
+    { ESF(apos.trDuration),     32 },
+    { ESF(apos.trBase[0]),      0 },
+    { ESF(apos.trBase[1]),      0 },
+    { ESF(apos.trBase[2]),      0 },
+    { ESF(apos.trDelta[0]),     0 },
+    { ESF(apos.trDelta[1]),     0 },
+    { ESF(apos.trDelta[2]),     0 },
+    { ESF(time),                32 },
+    { ESF(time2),               32 },
+    { ESF(origin[0]),           0 },
+    { ESF(origin[1]),           0 },
+    { ESF(origin[2]),           0 },
+    { ESF(origin2[0]),          0 },
+    { ESF(origin2[1]),          0 },
+    { ESF(origin2[2]),          0 },
+    { ESF(angles[0]),           0 },
+    { ESF(angles[1]),           0 },
+    { ESF(angles[2]),           0 },
+    { ESF(angles2[0]),          0 },
+    { ESF(angles2[1]),          0 },
+    { ESF(angles2[2]),          0 },
+    { ESF(otherEntityNum),      10 },
+    { ESF(otherEntityNum2),     10 },
+    { ESF(groundEntityNum),     10 },
+    { ESF(constantLight),       32 },
+    { ESF(loopSound),           16 },
+    { ESF(loopSoundVolume),     8 },
+    { ESF(loopSoundMinDist),    16 },
+    { ESF(loopSoundMaxDist),    0 },
+    { ESF(loopSoundPitch),      0 },
+    { ESF(loopSoundFlags),      8 },
+    { ESF(parent),              10 },
+    { ESF(tag_num),             8 },
+    { ESF(attach_use_angles),   1 },
+    { ESF(attach_offset[0]),    0 },
+    { ESF(attach_offset[1]),    0 },
+    { ESF(attach_offset[2]),    0 },
+    { ESF(beam_entnum),         10 },
+    { ESF(modelindex),          16 },
+    { ESF(usageIndex),          16 },
+    { ESF(skinNum),             8 },
+    { ESF(wasframe),            16 },
+    { ESF(actionWeight),        0 },
+    { ESF(clientNum),           8 },
+    { ESF(groundPlane),         1 },
+    { ESF(solid),               24 },
+    { ESF(scale),               0 },
+    { ESF(alpha),               0 },
+    { ESF(renderfx),            32 },
+    { ESF(shader_data[0]),      0 },
+    { ESF(shader_data[1]),      0 },
+    { ESF(shader_time),         0 },
+    { ESF(eType),               8 },
+    { ESF(eFlags),              32 },
+};
+
+#define NUM_ENTITY_FIELDS (int)(sizeof(entityStateFields) / sizeof(entityStateFields[0]))
+
+/* Write delta-encoded entity state. If 'from' is NULL, send full state.
+ * If entity is being removed, write entity number + remove bit. */
 void MSG_WriteDeltaEntity(msg_t *msg, entityState_t *from, entityState_t *to, qboolean force) {
-    /* TODO: Full delta encoding implementation.
-     * For loopback (single-player), we can send the full state initially. */
-    (void)msg; (void)from; (void)to; (void)force;
+    entityState_t dummy;
+    if (!from) {
+        memset(&dummy, 0, sizeof(dummy));
+        from = &dummy;
+    }
+
+    /* Check if entity is being removed */
+    if (to->number < 0 || to->number >= MAX_GENTITIES) {
+        /* Remove entity: write number with remove bit set */
+        MSG_WriteBits(msg, to->number, 10);
+        MSG_WriteBits(msg, 1, 1);   /* remove flag */
+        return;
+    }
+
+    /* Determine which fields changed -- build a bitmask.
+     * We use two 32-bit masks to cover all fields. */
+    int lc = -1;  /* last changed field index */
+    int i;
+
+    for (i = 0; i < NUM_ENTITY_FIELDS; i++) {
+        const netField_t *f = &entityStateFields[i];
+        const int *fromVal = (const int *)((const byte *)from + f->offset);
+        const int *toVal   = (const int *)((const byte *)to + f->offset);
+        if (*fromVal != *toVal) {
+            lc = i;
+        }
+    }
+
+    if (lc == -1 && !force) {
+        /* No changes and not forced -- don't write anything */
+        return;
+    }
+
+    MSG_WriteBits(msg, to->number, 10);
+    MSG_WriteBits(msg, 0, 1);   /* not removed */
+
+    if (lc == -1) {
+        /* No changes but forced -- write zero-change marker */
+        MSG_WriteBits(msg, 0, 1);
+        return;
+    }
+
+    MSG_WriteBits(msg, 1, 1);   /* has changes */
+    MSG_WriteBits(msg, lc, 8);  /* last changed field index */
+
+    for (i = 0; i <= lc; i++) {
+        const netField_t *f = &entityStateFields[i];
+        const int *fromVal = (const int *)((const byte *)from + f->offset);
+        const int *toVal   = (const int *)((const byte *)to + f->offset);
+
+        if (*fromVal == *toVal) {
+            MSG_WriteBits(msg, 0, 1);  /* not changed */
+        } else {
+            MSG_WriteBits(msg, 1, 1);  /* changed */
+            if (f->bits == 0) {
+                /* Float field */
+                float fv = *(const float *)toVal;
+                int trunc = (int)fv;
+                if (trunc == fv && trunc >= -4096 && trunc < 4096) {
+                    /* Send as truncated integer (saves bits) */
+                    MSG_WriteBits(msg, 0, 1);
+                    MSG_WriteBits(msg, trunc + 4096, 13);
+                } else {
+                    /* Send as full float */
+                    MSG_WriteBits(msg, 1, 1);
+                    MSG_WriteBits(msg, *toVal, 32);
+                }
+            } else {
+                /* Integer field */
+                int bits = f->bits;
+                if (bits < 0) bits = -bits;
+                MSG_WriteBits(msg, *toVal, bits);
+            }
+        }
+    }
 }
 
+/* Read delta-encoded entity state. Returns qtrue if entity was removed. */
 void MSG_ReadDeltaEntity(msg_t *msg, entityState_t *from, entityState_t *to, int number) {
-    /* TODO: Full delta decoding. */
-    (void)msg; (void)from; (void)to; (void)number;
+    if (!from) {
+        memset(to, 0, sizeof(*to));
+    } else if (to != from) {
+        memcpy(to, from, sizeof(*to));
+    }
+
+    to->number = number;
+
+    /* Check remove flag -- caller reads number and remove bit before calling */
+    int hasChanges = MSG_ReadBits(msg, 1);
+    if (!hasChanges) {
+        /* No field changes -- entity state unchanged from 'from' */
+        return;
+    }
+
+    int lc = MSG_ReadBits(msg, 8);  /* last changed field index */
+
+    for (int i = 0; i <= lc && i < NUM_ENTITY_FIELDS; i++) {
+        const netField_t *f = &entityStateFields[i];
+        int *toVal = (int *)((byte *)to + f->offset);
+
+        int changed = MSG_ReadBits(msg, 1);
+        if (!changed) continue;
+
+        if (f->bits == 0) {
+            /* Float field */
+            int fullFloat = MSG_ReadBits(msg, 1);
+            if (fullFloat) {
+                *toVal = MSG_ReadBits(msg, 32);
+            } else {
+                int trunc = MSG_ReadBits(msg, 13) - 4096;
+                *(float *)toVal = (float)trunc;
+            }
+        } else {
+            int bits = f->bits;
+            if (bits < 0) bits = -bits;
+            *toVal = MSG_ReadBits(msg, bits);
+        }
+    }
 }
+
+/* =========================================================================
+ * Delta player state encoding/decoding
+ *
+ * Same approach as entity state: bitmask of changed fields.
+ * ========================================================================= */
+
+#define PSF(x)  (int)(size_t)&((playerState_t *)0)->x
+
+static const netField_t playerStateFields[] = {
+    { PSF(commandTime),         32 },
+    { PSF(pm_type),             8 },
+    { PSF(pm_flags),            16 },
+    { PSF(pm_time),             16 },
+    { PSF(bobCycle),            8 },
+    { PSF(origin[0]),           0 },
+    { PSF(origin[1]),           0 },
+    { PSF(origin[2]),           0 },
+    { PSF(velocity[0]),         0 },
+    { PSF(velocity[1]),         0 },
+    { PSF(velocity[2]),         0 },
+    { PSF(gravity),             16 },
+    { PSF(speed),               16 },
+    { PSF(delta_angles[0]),     16 },
+    { PSF(delta_angles[1]),     16 },
+    { PSF(delta_angles[2]),     16 },
+    { PSF(groundEntityNum),     10 },
+    { PSF(legsTimer),           16 },
+    { PSF(legsAnim),            16 },
+    { PSF(torsoTimer),          16 },
+    { PSF(torsoAnim),           16 },
+    { PSF(movementDir),         8 },
+    { PSF(grapplePoint[0]),     0 },
+    { PSF(grapplePoint[1]),     0 },
+    { PSF(grapplePoint[2]),     0 },
+    { PSF(clientNum),           8 },
+    { PSF(viewangles[0]),       0 },
+    { PSF(viewangles[1]),       0 },
+    { PSF(viewangles[2]),       0 },
+    { PSF(viewheight),          -8 },
+    { PSF(fLeanAngle),          0 },
+    { PSF(current_music_mood),  8 },
+    { PSF(fallback_music_mood), 8 },
+    { PSF(music_volume),        0 },
+    { PSF(music_volume_fade_time), 0 },
+    { PSF(reverb_type),         8 },
+    { PSF(reverb_level),        0 },
+    { PSF(blend[0]),            0 },
+    { PSF(blend[1]),            0 },
+    { PSF(blend[2]),            0 },
+    { PSF(blend[3]),            0 },
+    { PSF(fov),                 0 },
+    { PSF(camera_origin[0]),    0 },
+    { PSF(camera_origin[1]),    0 },
+    { PSF(camera_origin[2]),    0 },
+    { PSF(camera_angles[0]),    0 },
+    { PSF(camera_angles[1]),    0 },
+    { PSF(camera_angles[2]),    0 },
+    { PSF(camera_flags),        16 },
+    { PSF(camera_offset),       0 },
+    { PSF(camera_posofs[0]),    0 },
+    { PSF(camera_posofs[1]),    0 },
+    { PSF(camera_posofs[2]),    0 },
+    { PSF(voted),               2 },
+};
+
+#define NUM_PS_FIELDS (int)(sizeof(playerStateFields) / sizeof(playerStateFields[0]))
 
 void MSG_WriteDeltaPlayerstate(msg_t *msg, playerState_t *from, playerState_t *to) {
-    (void)msg; (void)from; (void)to;
-    /* TODO: Delta-encoded player state */
+    playerState_t dummy;
+    if (!from) {
+        memset(&dummy, 0, sizeof(dummy));
+        from = &dummy;
+    }
+
+    /* Find last changed field */
+    int lc = -1;
+    for (int i = 0; i < NUM_PS_FIELDS; i++) {
+        const netField_t *f = &playerStateFields[i];
+        const int *fromVal = (const int *)((const byte *)from + f->offset);
+        const int *toVal   = (const int *)((const byte *)to + f->offset);
+        if (*fromVal != *toVal) lc = i;
+    }
+
+    if (lc == -1) {
+        MSG_WriteBits(msg, 0, 1);   /* no changes */
+        goto write_arrays;
+    }
+
+    MSG_WriteBits(msg, 1, 1);       /* has changes */
+    MSG_WriteBits(msg, lc, 8);
+
+    for (int i = 0; i <= lc; i++) {
+        const netField_t *f = &playerStateFields[i];
+        const int *fromVal = (const int *)((const byte *)from + f->offset);
+        const int *toVal   = (const int *)((const byte *)to + f->offset);
+
+        if (*fromVal == *toVal) {
+            MSG_WriteBits(msg, 0, 1);
+        } else {
+            MSG_WriteBits(msg, 1, 1);
+            if (f->bits == 0) {
+                float fv = *(const float *)toVal;
+                int trunc = (int)fv;
+                if (trunc == fv && trunc >= -4096 && trunc < 4096) {
+                    MSG_WriteBits(msg, 0, 1);
+                    MSG_WriteBits(msg, trunc + 4096, 13);
+                } else {
+                    MSG_WriteBits(msg, 1, 1);
+                    MSG_WriteBits(msg, *toVal, 32);
+                }
+            } else {
+                int bits = f->bits;
+                if (bits < 0) bits = -bits;
+                MSG_WriteBits(msg, *toVal, bits);
+            }
+        }
+    }
+
+write_arrays:
+    /* Delta-encode stat/ammo arrays */
+    {
+        int statsBits = 0;
+        for (int i = 0; i < 32; i++) {
+            if (to->stats[i] != from->stats[i]) statsBits |= (1 << i);
+        }
+        if (statsBits) {
+            MSG_WriteBits(msg, 1, 1);
+            MSG_WriteLong(msg, statsBits);
+            for (int i = 0; i < 32; i++) {
+                if (statsBits & (1 << i)) MSG_WriteShort(msg, to->stats[i]);
+            }
+        } else {
+            MSG_WriteBits(msg, 0, 1);
+        }
+
+        int ammoBits = 0;
+        for (int i = 0; i < 16; i++) {
+            if (to->ammo_amount[i] != from->ammo_amount[i]) ammoBits |= (1 << i);
+        }
+        if (ammoBits) {
+            MSG_WriteBits(msg, 1, 1);
+            MSG_WriteShort(msg, ammoBits);
+            for (int i = 0; i < 16; i++) {
+                if (ammoBits & (1 << i)) MSG_WriteShort(msg, to->ammo_amount[i]);
+            }
+        } else {
+            MSG_WriteBits(msg, 0, 1);
+        }
+    }
 }
 
 void MSG_ReadDeltaPlayerstate(msg_t *msg, playerState_t *from, playerState_t *to) {
-    (void)msg; (void)from; (void)to;
+    playerState_t dummy;
+    if (!from) {
+        memset(&dummy, 0, sizeof(dummy));
+        from = &dummy;
+    }
+    memcpy(to, from, sizeof(*to));
+
+    int hasChanges = MSG_ReadBits(msg, 1);
+    if (hasChanges) {
+        int lc = MSG_ReadBits(msg, 8);
+        for (int i = 0; i <= lc && i < NUM_PS_FIELDS; i++) {
+            const netField_t *f = &playerStateFields[i];
+            int *toVal = (int *)((byte *)to + f->offset);
+
+            if (!MSG_ReadBits(msg, 1)) continue;
+
+            if (f->bits == 0) {
+                if (MSG_ReadBits(msg, 1)) {
+                    *toVal = MSG_ReadBits(msg, 32);
+                } else {
+                    *(float *)toVal = (float)(MSG_ReadBits(msg, 13) - 4096);
+                }
+            } else {
+                int bits = f->bits;
+                if (bits < 0) bits = -bits;
+                *toVal = MSG_ReadBits(msg, bits);
+            }
+        }
+    }
+
+    /* Read stat/ammo arrays */
+    if (MSG_ReadBits(msg, 1)) {
+        int statsBits = MSG_ReadLong(msg);
+        for (int i = 0; i < 32; i++) {
+            if (statsBits & (1 << i)) to->stats[i] = MSG_ReadShort(msg);
+        }
+    }
+    if (MSG_ReadBits(msg, 1)) {
+        int ammoBits = (unsigned short)MSG_ReadShort(msg);
+        for (int i = 0; i < 16; i++) {
+            if (ammoBits & (1 << i)) to->ammo_amount[i] = MSG_ReadShort(msg);
+        }
+    }
 }
