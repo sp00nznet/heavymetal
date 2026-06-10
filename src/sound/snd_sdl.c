@@ -1,13 +1,13 @@
 /*
- * snd_sdl.c -- SDL2 audio backend
+ * snd_sdl.c -- SDL3 audio backend
  *
- * Provides low-level audio output via SDL2's audio API.
+ * Provides low-level audio output via SDL3's audio API.
  * This replaces the Miles Sound System's hardware abstraction.
  *
  * Audio pipeline:
  *   1. Sound files (.wav) loaded from PK3 into memory
  *   2. Playing sounds tracked in channel array
- *   3. SDL2 audio callback mixes active channels
+ *   3. SDL3 audio callback mixes active channels
  *   4. 3D spatialization via distance attenuation and stereo pan
  *
  * The original Miles Sound System supported:
@@ -17,7 +17,7 @@
  *   - Reverb effects
  *   - Streaming music with crossfading
  *
- * We replicate these features using SDL2's audio API.
+ * We replicate these features using SDL3's audio API.
  */
 
 #include "snd_local.h"
@@ -25,8 +25,8 @@
 #include <string.h>
 #include <math.h>
 
-#ifdef USE_SDL2
-#include <SDL2/SDL.h>
+#ifdef USE_SDL3
+#include <SDL3/SDL.h>
 #endif
 
 /* =========================================================================
@@ -36,11 +36,11 @@
 #define SND_SAMPLE_RATE     22050   /* original FAKK2 audio rate */
 #define SND_CHANNELS        2       /* stereo output */
 #define SND_SAMPLES         1024    /* buffer size in samples */
-#define SND_FORMAT          AUDIO_S16SYS
+#define SND_FORMAT          SDL_AUDIO_S16
 
 typedef struct {
     qboolean        initialized;
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     SDL_AudioDeviceID deviceId;
     SDL_AudioSpec   spec;
 #endif
@@ -293,11 +293,11 @@ static void SND_Spatialize(sndChannel_t *ch, float *leftVol, float *rightVol) {
 /* =========================================================================
  * Audio mixing callback
  *
- * Called by SDL2's audio thread to fill the output buffer.
+ * Called by SDL3's audio thread to fill the output buffer.
  * Mixes all active sound channels into the output.
  * ========================================================================= */
 
-#ifdef USE_SDL2
+#ifdef USE_SDL3
 static void SND_AudioCallback(void *userdata, Uint8 *stream, int len) {
     (void)userdata;
 
@@ -378,32 +378,29 @@ static void SND_AudioCallback(void *userdata, Uint8 *stream, int len) {
  * ========================================================================= */
 
 qboolean SND_Init(void) {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     SDL_AudioSpec desired;
     memset(&desired, 0, sizeof(desired));
     desired.freq = SND_SAMPLE_RATE;
     desired.format = SND_FORMAT;
     desired.channels = SND_CHANNELS;
-    desired.samples = SND_SAMPLES;
-    desired.callback = SND_AudioCallback;
 
-    snd_backend.deviceId = SDL_OpenAudioDevice(NULL, 0, &desired,
-                                                &snd_backend.spec, 0);
+    snd_backend.deviceId = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired);
     if (snd_backend.deviceId == 0) {
         Com_Printf("SND_Init: SDL_OpenAudioDevice failed: %s\n", SDL_GetError());
         return qfalse;
     }
 
+    snd_backend.spec = desired;
     snd_backend.masterVolume = 0.8f;
     snd_backend.musicVolume = 0.5f;
     snd_backend.initialized = qtrue;
 
     /* Start playback */
-    SDL_PauseAudioDevice(snd_backend.deviceId, 0);
+    SDL_PauseAudioDevice(snd_backend.deviceId);
 
-    Com_Printf("SDL2 audio: %d Hz, %d ch, %d samples\n",
-               snd_backend.spec.freq, snd_backend.spec.channels,
-               snd_backend.spec.samples);
+    Com_Printf("SDL3 audio: %d Hz, %d ch, %d samples\n",
+               snd_backend.spec.freq, snd_backend.spec.channels, 16);
     return qtrue;
 #else
     return qfalse;
@@ -411,7 +408,7 @@ qboolean SND_Init(void) {
 }
 
 void SND_Shutdown(void) {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     if (snd_backend.deviceId) {
         SDL_CloseAudioDevice(snd_backend.deviceId);
         snd_backend.deviceId = 0;
@@ -609,19 +606,13 @@ byte *SND_GetPCMData(sfxHandle_t sfx, int *outLen, int *outRate, int *outBits, i
 }
 
 void SND_StopAllSounds(void) {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     if (snd_backend.deviceId) {
-        SDL_LockAudioDevice(snd_backend.deviceId);
+        SDL_CloseAudioDevice(snd_backend.deviceId);
     }
 #endif
 
     for (int i = 0; i < MAX_SOUND_CHANNELS; i++) {
         snd_channels[i].active = qfalse;
     }
-
-#ifdef USE_SDL2
-    if (snd_backend.deviceId) {
-        SDL_UnlockAudioDevice(snd_backend.deviceId);
-    }
-#endif
 }

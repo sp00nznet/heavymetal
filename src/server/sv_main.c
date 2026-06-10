@@ -471,6 +471,8 @@ static void SV_ExecuteClientCommand(svClient_t *cl, const char *s) {
     }
 }
 
+static void SV_SendClientSnapshots(void);
+
 /* =========================================================================
  * Server frame
  *

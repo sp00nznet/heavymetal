@@ -161,7 +161,7 @@ int COM_GetCurrentParseLine(void) {
 }
 
 char *COM_Parse(char **data_p) {
-    return COM_ParseExt(data_p, qtrue);
+    return COM_ParseExt((char**)data_p, qtrue);
 }
 
 char *COM_ParseExt(char **data_p, qboolean allowLineBreak) {

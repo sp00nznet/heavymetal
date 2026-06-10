@@ -1,7 +1,7 @@
 /*
  * r_gl.h -- OpenGL function declarations for the FAKK2 renderer
  *
- * Loads GL functions via SDL2's GL proc address mechanism.
+ * Loads GL functions via SDL3's GL proc address mechanism.
  * This replaces the original's LoadLibraryA("opengl32.dll") approach.
  *
  * We target OpenGL 2.1 compatibility profile as the minimum, which
@@ -12,12 +12,13 @@
 #ifndef R_GL_H
 #define R_GL_H
 
-#ifdef USE_SDL2
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_opengl.h>
+#ifdef USE_SDL3
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_opengl.h>
 #else
 #include <GL/gl.h>
 #endif
+#include "../engine/win32_compat.h"
 
 /* GL 1.3 multitexture constants (may not be in GL/gl.h on Windows) */
 #ifndef GL_TEXTURE0
@@ -50,7 +51,7 @@ typedef void (APIENTRY *PFNGLBUFFERDATAPROC)(GLenum target, GLsizeiptr size, con
 /* Shaders (GL 2.0) */
 typedef GLuint (APIENTRY *PFNGLCREATESHADERPROC)(GLenum type);
 typedef void (APIENTRY *PFNGLDELETESHADERPROC)(GLuint shader);
-typedef void (APIENTRY *PFNGLSHADERSOURCEPROC)(GLuint shader, GLsizei count, const GLchar **string, const GLint *length);
+typedef void (APIENTRY *PFNGLSHADERSOURCEPROC)(GLuint shader, GLsizei count, const GLchar * const*string, const GLint *length);
 typedef void (APIENTRY *PFNGLCOMPILESHADERPROC)(GLuint shader);
 typedef GLuint (APIENTRY *PFNGLCREATEPROGRAMPROC)(void);
 typedef void (APIENTRY *PFNGLDELETEPROGRAMPROC)(GLuint program);

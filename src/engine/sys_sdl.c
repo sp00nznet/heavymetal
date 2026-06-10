@@ -1,9 +1,9 @@
 /*
- * sys_sdl.c -- Platform layer using SDL2
+ * sys_sdl.c -- Platform layer using SDL3
  *
  * Replaces the original Win32 platform code (WinMain, window creation,
  * input handling, timing). The original imported 195 functions from
- * 6 Win32 DLLs. SDL2 replaces most of them with a single cross-platform API.
+ * 6 Win32 DLLs. SDL3 replaces most of them with a single cross-platform API.
  */
 
 #include "qcommon.h"
@@ -12,6 +12,11 @@
 #include <stdarg.h>
 #include <time.h>
 
+#ifndef _MSC_VER
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 /* =========================================================================
  * Global window state
  * ========================================================================= */
@@ -23,8 +28,8 @@ fakk_window_t fakk_window;
  * ========================================================================= */
 
 void Sys_Init(void) {
-#ifdef USE_SDL2
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) < 0) {
+#ifdef USE_SDL3
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD) < 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         exit(1);
     }
@@ -40,7 +45,7 @@ void Sys_Init(void) {
 
     Time_Init();
 
-    Com_Printf("Platform: SDL2 initialized\n");
+    Com_Printf("Platform: SDL3 initialized\n");
 }
 
 /* =========================================================================
@@ -55,13 +60,13 @@ void Sys_Init(void) {
 static qword time_base = 0;
 
 void Time_Init(void) {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     time_base = SDL_GetPerformanceCounter();
 #endif
 }
 
 int Time_Milliseconds(void) {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     return (int)SDL_GetTicks();
 #else
     return (int)(clock() * 1000 / CLOCKS_PER_SEC);
@@ -69,7 +74,7 @@ int Time_Milliseconds(void) {
 }
 
 qword Time_Microseconds(void) {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     qword now = SDL_GetPerformanceCounter();
     qword freq = SDL_GetPerformanceFrequency();
     return ((now - time_base) * 1000000) / freq;
@@ -92,13 +97,12 @@ int Sys_Milliseconds(void) {
  * ========================================================================= */
 
 qboolean Win_Create(int width, int height, qboolean fullscreen) {
-#ifdef USE_SDL2
-    Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN;
+#ifdef USE_SDL3
+    Uint32 flags = SDL_WINDOW_OPENGL;
     if (fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
 
     fakk_window.window = SDL_CreateWindow(
         "Heavy Metal: FAKK2",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         width, height, flags
     );
 
@@ -129,9 +133,9 @@ qboolean Win_Create(int width, int height, qboolean fullscreen) {
 }
 
 void Win_Destroy(void) {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     if (fakk_window.gl_context) {
-        SDL_GL_DeleteContext(fakk_window.gl_context);
+        SDL_GL_DestroyContext(fakk_window.gl_context);
         fakk_window.gl_context = NULL;
     }
     if (fakk_window.window) {
@@ -143,7 +147,7 @@ void Win_Destroy(void) {
 }
 
 void Win_SwapBuffers(void) {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     if (fakk_window.window) {
         SDL_GL_SwapWindow(fakk_window.window);
     }
@@ -151,7 +155,7 @@ void Win_SwapBuffers(void) {
 }
 
 void Win_SetTitle(const char *title) {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     if (fakk_window.window) {
         SDL_SetWindowTitle(fakk_window.window, title);
     }
@@ -168,7 +172,7 @@ void Sys_Print(const char *msg) {
 }
 
 void Sys_Quit(void) {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     SDL_Quit();
 #endif
     exit(0);
@@ -184,7 +188,7 @@ void Sys_Error(const char *error, ...) {
 
     fprintf(stderr, "FATAL ERROR: %s\n", msg);
 
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FAKK2 Fatal Error", msg, NULL);
     SDL_Quit();
 #endif
@@ -215,7 +219,7 @@ char *Sys_DefaultBasePath(void) {
 }
 
 char *Sys_GetClipboardData(void) {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     return SDL_GetClipboardText();
 #else
     return NULL;
@@ -223,7 +227,7 @@ char *Sys_GetClipboardData(void) {
 }
 
 void Sys_SetClipboardData(const char *data) {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     SDL_SetClipboardText(data);
 #endif
 }
@@ -256,16 +260,10 @@ void IN_SetMouseMoveCallback(void (*callback)(int dx, int dy)) {
 }
 
 void IN_Init(void) {
-    Com_Printf("Input: SDL2 input initialized\n");
-#ifdef USE_SDL2
-    SDL_SetRelativeMouseMode(SDL_TRUE);
-#endif
+    Com_Printf("Input: SDL3 input initialized\n");
 }
 
 void IN_Shutdown(void) {
-#ifdef USE_SDL2
-    SDL_SetRelativeMouseMode(SDL_FALSE);
-#endif
 }
 
 void IN_Frame(void) {
@@ -273,18 +271,15 @@ void IN_Frame(void) {
 }
 
 void IN_Activate(qboolean active) {
-#ifdef USE_SDL2
-    SDL_SetRelativeMouseMode(active ? SDL_TRUE : SDL_FALSE);
-#endif
     (void)active;
 }
 
 /* =========================================================================
- * SDL2 scancode to engine keyNum_t translation
+ * SDL3 scancode to engine keyNum_t translation
  * ========================================================================= */
 
-#ifdef USE_SDL2
-static int SDL_ScancodeToKey(SDL_Scancode sc) {
+#ifdef USE_SDL3
+static int SDL_ScancodeToKey(SDL_Scancode sc, SDL_Keymod mod) {
     switch (sc) {
         case SDL_SCANCODE_TAB:          return K_TAB;
         case SDL_SCANCODE_RETURN:       return K_ENTER;
@@ -324,13 +319,13 @@ static int SDL_ScancodeToKey(SDL_Scancode sc) {
         default:
             /* ASCII range keys */
             if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z)
-                return 'a' + (sc - SDL_SCANCODE_A);
+                return ((mod & SDL_KMOD_SHIFT) ? 'A' : 'a') + (sc - SDL_SCANCODE_A);
             if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9)
                 return '1' + (sc - SDL_SCANCODE_1);
             if (sc == SDL_SCANCODE_0)
                 return '0';
-            if (sc == SDL_SCANCODE_MINUS)    return '-';
-            if (sc == SDL_SCANCODE_EQUALS)   return '=';
+            if (sc == SDL_SCANCODE_MINUS)    return (mod & SDL_KMOD_SHIFT) ? '_' : '-';
+            if (sc == SDL_SCANCODE_EQUALS)   return (mod & SDL_KMOD_SHIFT) ? '+' : '=';
             if (sc == SDL_SCANCODE_LEFTBRACKET)  return '[';
             if (sc == SDL_SCANCODE_RIGHTBRACKET) return ']';
             if (sc == SDL_SCANCODE_BACKSLASH)    return '\\';
@@ -353,82 +348,76 @@ static int SDL_MouseButtonToKey(int button) {
         default:                return 0;
     }
 }
-#endif /* USE_SDL2 */
+#endif /* USE_SDL3 */
 
 /* =========================================================================
  * Window event processing
  *
  * Replaces the Win32 message pump (PeekMessageA/DispatchMessageA).
- * Translates SDL2 events into engine key/mouse events.
+ * Translates SDL3 events into engine key/mouse events.
  * Returns qfalse if the application should quit.
  * ========================================================================= */
 
 qboolean Win_ProcessEvents(void) {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     SDL_Event event;
     unsigned int time = (unsigned int)Sys_Milliseconds();
 
     while (SDL_PollEvent(&event)) {
         switch (event.type) {
-            case SDL_QUIT:
+            case SDL_EVENT_QUIT:
                 return qfalse;
 
-            case SDL_WINDOWEVENT:
-                switch (event.window.event) {
-                    case SDL_WINDOWEVENT_MINIMIZED:
-                        fakk_window.minimized = qtrue;
-                        fakk_window.active = qfalse;
-                        break;
-                    case SDL_WINDOWEVENT_RESTORED:
-                        fakk_window.minimized = qfalse;
-                        fakk_window.active = qtrue;
-                        break;
-                    case SDL_WINDOWEVENT_FOCUS_GAINED:
-                        fakk_window.active = qtrue;
-                        IN_Activate(qtrue);
-                        break;
-                    case SDL_WINDOWEVENT_FOCUS_LOST:
-                        fakk_window.active = qfalse;
-                        IN_Activate(qfalse);
-                        break;
-                    case SDL_WINDOWEVENT_SIZE_CHANGED:
-                        fakk_window.width = event.window.data1;
-                        fakk_window.height = event.window.data2;
-                        break;
+	    case SDL_EVENT_WINDOW_MINIMIZED:
+		fakk_window.minimized = qtrue;
+		fakk_window.active = qfalse;
+		break;
+	    case SDL_EVENT_WINDOW_RESTORED:
+		fakk_window.minimized = qfalse;
+		fakk_window.active = qtrue;
+		break;
+	    case SDL_EVENT_WINDOW_FOCUS_GAINED:
+		fakk_window.active = qtrue;
+		IN_Activate(qtrue);
+		break;
+	    case SDL_EVENT_WINDOW_FOCUS_LOST:
+		fakk_window.active = qfalse;
+		IN_Activate(qfalse);
+		break;
+	    case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+		fakk_window.width = event.window.data1;
+		fakk_window.height = event.window.data2;
+		break;
+
+            case SDL_EVENT_KEY_DOWN:
+            case SDL_EVENT_KEY_UP: {
+                int key = SDL_ScancodeToKey(event.key.scancode,event.key.mod);
+                if (key && key_event_callback) {
+                    key_event_callback(key, event.key.down, time);
                 }
                 break;
-
-            case SDL_KEYDOWN:
-            case SDL_KEYUP: {
-                int key = SDL_ScancodeToKey(event.key.keysym.scancode);
-                qboolean down = (event.type == SDL_KEYDOWN) ? qtrue : qfalse;
-                if (key && key_event_callback)
-                    key_event_callback(key, down, time);
-                break;
-            }
-
-            case SDL_TEXTINPUT: {
-                /* Feed printable characters for console input */
-                if (char_event_callback) {
+	    }
+            case SDL_EVENT_TEXT_INPUT:
+            case SDL_EVENT_TEXT_EDITING: {
+                 if(char_event_callback) {
                     for (int i = 0; event.text.text[i]; i++) {
                         unsigned char ch = (unsigned char)event.text.text[i];
                         if (ch >= 32 && ch < 127)
                             char_event_callback(ch);
                     }
-                }
-                break;
+		 }
+                 break;
             }
-
-            case SDL_MOUSEBUTTONDOWN:
-            case SDL_MOUSEBUTTONUP: {
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_BUTTON_UP: {
                 int key = SDL_MouseButtonToKey(event.button.button);
-                qboolean down = (event.type == SDL_MOUSEBUTTONDOWN) ? qtrue : qfalse;
+                qboolean down = (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) ? qtrue : qfalse;
                 if (key && key_event_callback)
                     key_event_callback(key, down, time);
                 break;
             }
 
-            case SDL_MOUSEWHEEL:
+            case SDL_EVENT_MOUSE_WHEEL:
                 if (key_event_callback) {
                     if (event.wheel.y > 0) {
                         key_event_callback(K_MWHEELUP, qtrue, time);
@@ -440,7 +429,7 @@ qboolean Win_ProcessEvents(void) {
                 }
                 break;
 
-            case SDL_MOUSEMOTION:
+            case SDL_EVENT_MOUSE_MOTION:
                 if (mouse_move_callback && fakk_window.active)
                     mouse_move_callback(event.motion.xrel, event.motion.yrel);
                 break;
@@ -454,26 +443,14 @@ qboolean Win_ProcessEvents(void) {
  * Gamma control
  *
  * Original used SetDeviceGammaRamp/GetDeviceGammaRamp (GDI32.DLL).
- * SDL2 provides SDL_SetWindowBrightness as a simple alternative.
+ * SDL3 provides SDL_SetWindowBrightness as a simple alternative.
  * ========================================================================= */
 
 void Win_SetGamma(float gamma) {
-#ifdef USE_SDL2
-    if (fakk_window.window) {
-        SDL_SetWindowBrightness(fakk_window.window, gamma);
-    }
-#else
     (void)gamma;
-#endif
 }
 
 void Win_GetGamma(float *gamma) {
-#ifdef USE_SDL2
-    if (fakk_window.window && gamma) {
-        *gamma = SDL_GetWindowBrightness(fakk_window.window);
-        return;
-    }
-#endif
     if (gamma) *gamma = 1.0f;
 }
 
@@ -481,11 +458,11 @@ void Win_GetGamma(float *gamma) {
  * OpenGL loading
  *
  * Original loaded opengl32.dll dynamically via LoadLibraryA/GetProcAddress.
- * The recomp uses SDL2's GL loader.
+ * The recomp uses SDL3's GL loader.
  * ========================================================================= */
 
 qboolean GLimp_Init(void) {
-    /* GL context is created in Win_Create via SDL2 */
+    /* GL context is created in Win_Create via SDL3 */
     Com_Printf("GLimp: OpenGL context ready\n");
     return qtrue;
 }
@@ -495,7 +472,7 @@ void GLimp_Shutdown(void) {
 }
 
 void *GLimp_GetProcAddress(const char *name) {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     return SDL_GL_GetProcAddress(name);
 #else
     return NULL;
@@ -547,7 +524,7 @@ const char *Reg_GetUserName(void) {
 void *Sys_LoadDll(const char *name) {
 #ifdef PLATFORM_WINDOWS
     return (void *)LoadLibraryA(name);
-#elif defined(USE_SDL2)
+#elif defined(USE_SDL3)
     return SDL_LoadObject(name);
 #else
     return NULL;
@@ -557,7 +534,7 @@ void *Sys_LoadDll(const char *name) {
 void *Sys_GetProcAddress(void *handle, const char *name) {
 #ifdef PLATFORM_WINDOWS
     return (void *)GetProcAddress((HMODULE)handle, name);
-#elif defined(USE_SDL2)
+#elif defined(USE_SDL3)
     return SDL_LoadFunction(handle, name);
 #else
     return NULL;
@@ -568,7 +545,7 @@ void Sys_UnloadDll(void *handle) {
     if (!handle) return;
 #ifdef PLATFORM_WINDOWS
     FreeLibrary((HMODULE)handle);
-#elif defined(USE_SDL2)
+#elif defined(USE_SDL3)
     SDL_UnloadObject(handle);
 #endif
 }

@@ -65,9 +65,9 @@ typedef struct {
  * Model cache
  * ========================================================================= */
 
-#define MAX_MODELS  1024
+#define MAX_CACHE_MODELS  1024
 
-static model_t  r_models[MAX_MODELS];
+static model_t  r_models[MAX_CACHE_MODELS];
 static int      r_numModels;
 
 /* =========================================================================
@@ -75,8 +75,8 @@ static int      r_numModels;
  * ========================================================================= */
 
 static model_t *R_AllocModel(void) {
-    if (r_numModels >= MAX_MODELS) {
-        Com_Printf("R_AllocModel: MAX_MODELS hit\n");
+    if (r_numModels >= MAX_CACHE_MODELS) {
+        Com_Printf("R_AllocModel: MAX_CACHE_MODELS hit\n");
         return NULL;
     }
 

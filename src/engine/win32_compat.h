@@ -9,7 +9,7 @@
  *   WSOCK32.DLL   (17 functions)  -- UDP/TCP networking
  *   ADVAPI32.DLL  (6 functions)   -- Registry, user info
  *
- * In the recomp, we replace most of these with SDL2 equivalents.
+ * In the recomp, we replace most of these with SDL3 equivalents.
  * This header provides the mapping layer.
  *
  * Total: 195 unique Win32 API functions to handle.
@@ -44,14 +44,14 @@
 #endif
 
 /* =========================================================================
- * SDL2 platform abstraction
+ * SDL3 platform abstraction
  *
  * These functions replace the Win32 API calls. The original imports
  * are documented here for reference during reverse engineering.
  * ========================================================================= */
 
-#ifdef USE_SDL2
-#include <SDL2/SDL.h>
+#ifdef USE_SDL3
+#include <SDL3/SDL.h>
 #endif
 
 /* =========================================================================
@@ -69,7 +69,7 @@
  * ========================================================================= */
 
 typedef struct {
-#ifdef USE_SDL2
+#ifdef USE_SDL3
     SDL_Window      *window;
     SDL_GLContext    gl_context;
 #endif

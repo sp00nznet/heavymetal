@@ -15,9 +15,9 @@ This project statically recompiles the original `fakk2.exe` (v1.02) into a nativ
 | Issue | Cause | Our Fix |
 |-------|-------|---------|
 | Crashes on launch | ASLR randomizes load address; original has no relocations, must load at `0x00400000` | 64-bit recomp with full ASLR support |
-| Graphics corruption | Legacy OpenGL 1.x calls on modern drivers | Updated to OpenGL 4.x via SDL2 |
+| Graphics corruption | Legacy OpenGL 1.x calls on modern drivers | Updated to OpenGL 4.x via SDL3 |
 | No widescreen | Hardcoded 4:3 resolutions | Native widescreen/ultrawide support |
-| Timing issues | `timeGetTime()` precision on modern kernels | High-resolution SDL2 timers |
+| Timing issues | `timeGetTime()` precision on modern kernels | High-resolution SDL3 timers |
 | CD check | Original requires disc in drive | Removed (you supply your own game files) |
 | Registry dependency | Install path/CD key in Windows registry | Config file based |
 
@@ -31,10 +31,10 @@ fakk2-recomp (unified 64-bit binary)
     |-- Morpheus Scripting .... ~700 commands for entity/camera/AI control
     |-- Ghost Particles ....... Custom particle system (~50 params/emitter)
     |-- Renderer .............. OpenGL 4.x (replacing legacy GL 1.x)
-    |-- Sound ................. SDL2 audio (replacing Miles Sound System)
+    |-- Sound ................. SDL3 audio (replacing Miles Sound System)
     |-- Client ................ Input, view, HUD, cgame interface
     |-- Server ................ Game simulation, AI, physics, fgame interface
-    '-- Platform Layer ........ SDL2 (replacing 195 Win32 API calls)
+    '-- Platform Layer ........ SDL3 (replacing 195 Win32 API calls)
 ```
 
 ## Original Binary Analysis
@@ -52,7 +52,7 @@ The engine executable imports from 6 Win32 DLLs (195 unique functions) and dynam
 ### Prerequisites
 - CMake 3.20+
 - C17/C++20 compiler (MSVC 2022, GCC 13+, or Clang 17+)
-- SDL2 development libraries
+- SDL3 development libraries
 - OpenGL headers
 
 ### Build
@@ -82,7 +82,7 @@ your_install/
 - [x] Project structure and CMake build system
 - [x] Type definitions and shared math
 - [x] Engine core stubs (command, cvar, filesystem, network)
-- [x] Platform abstraction layer (SDL2)
+- [x] Platform abstraction layer (SDL3)
 - [x] TIKI model system header and stubs
 - [x] Morpheus scripting stubs
 - [x] Ghost particle system stubs
@@ -103,8 +103,14 @@ your_install/
 
 | Project | Description |
 |---------|-------------|
+| [fakk2-v14](https://www.moddb.com/mods/heavy-metal-fakk2-patch-v14) | Official Patch v1.4 |
 | [fakk2-sdk](https://github.com/a1batross/fakk2-sdk) | Official FAKK2 SDK (game logic source), builds on modern systems |
 | [fakk2-rework](https://github.com/Sporesirius/fakk2-rework) | Modernization effort (CMake, Vulkan goals) |
+| [fakk2-remastered](https://www.nexusmods.com/games/heavymetalfakk2) | Fully remastered game - Textures - Restored |
+| [fakk2-retextured](https://www.moddb.com/mods/heavy-metal-fakk-2-retextured) | High resolution texture pack |
+| [fakk2-boogie](https://www.moddb.com/games/heavy-metal-fakk-2/addons/heavy-metal-fakk-2-between-heaven-and-hell) | Unofficial expansion pack: Between Heaven And Hell |
+| [fakk2-mission](https://www.moddb.com/games/heavy-metall-fakk-2/addons/heavy-metal-fakk-2-the-mission) | Single-Player Campaign |
+| [fakk2-rumrunners](https://www.moddb.com/games/heavy-metall-fakk-2/addons/rum-runners) | Total Conversion |
 | [ioquake3](https://github.com/ioquake/ioq3) | Community id Tech 3 fork (base engine reference) |
 | [sof-recomp](https://github.com/sp00nznet/sof) | Soldier of Fortune recomp (sister project, id Tech 2) |
 

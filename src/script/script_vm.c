@@ -42,8 +42,8 @@ static qboolean Cmd_Print(scriptThread_t *thread, scriptArgs_t *args) {
     (void)thread;
     char buf[1024] = "";
     for (int i = 1; i < args->argc; i++) {
-        if (i > 1) Q_strcat(buf, sizeof(buf), " ");
-        Q_strcat(buf, sizeof(buf), args->argv[i]);
+        if (i > 1) strncat(buf, " ", strlen(buf) + 1);
+        strncat(buf, args->argv[i], strlen(buf) + 1);
     }
     Com_Printf("%s\n", buf);
     return qtrue;
@@ -53,8 +53,8 @@ static qboolean Cmd_DPrintln(scriptThread_t *thread, scriptArgs_t *args) {
     (void)thread;
     char buf[1024] = "";
     for (int i = 1; i < args->argc; i++) {
-        if (i > 1) Q_strcat(buf, sizeof(buf), " ");
-        Q_strcat(buf, sizeof(buf), args->argv[i]);
+        if (i > 1) strncat(buf, " ", strlen(buf) + 1);
+        strncat(buf, args->argv[i], strlen(buf) + 1);
     }
     Com_DPrintf("%s\n", buf);
     return qtrue;

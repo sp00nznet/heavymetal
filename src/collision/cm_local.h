@@ -17,6 +17,7 @@
 
 #include "../common/qcommon.h"
 #include "../common/qfiles.h"
+#include "../common/cg_public.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -168,7 +169,7 @@ void        CM_TransformedBoxTrace(trace_t *results, const vec3_t start, const v
                                    qboolean cylinder);
 
 int         CM_MarkFragments(int numPoints, const vec3_t *points, const vec3_t projection,
-                             int maxPoints, vec3_t pointBuffer, int maxFragments,
+                             int maxPoints, vec3_t* pointBuffer, int maxFragments,
                              markFragment_t *fragmentBuffer);
 
 qboolean    CM_InPVS(vec3_t p1, vec3_t p2);

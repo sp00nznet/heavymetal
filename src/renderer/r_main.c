@@ -11,7 +11,7 @@
  *   - Mark (decal) system for bullet impacts and blood
  *
  * The original dynamically loads OpenGL via LoadLibraryA/GetProcAddress.
- * The recomp uses SDL2's GL loader for portability.
+ * The recomp uses SDL3's GL loader for portability.
  *
  * OpenGL was the only rendering path -- no Direct3D support in original.
  */
@@ -22,6 +22,9 @@
 #include <string.h>
 #include <math.h>
 
+#ifndef _MSC_VER
+#include "../engine/win32_compat.h"
+#endif
 static glconfig_t glconfig;
 
 /* Expose for r_gl.c */

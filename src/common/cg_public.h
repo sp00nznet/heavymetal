@@ -128,7 +128,7 @@ typedef struct {
     clipHandle_t (*CM_InlineModel)(int index);
     int         (*CM_NumInlineModels)(void);
     int         (*CM_PointContents)(const vec3_t p, int headnode);
-    int         (*CM_TransformedPointContents)(const vec3_t p, int headnode, vec3_t origin, vec3_t angles);
+    int         (*CM_TransformedPointContents)(const vec3_t p, clipHandle_t headnode, const vec3_t origin, const vec3_t angles);
     void        (*CM_BoxTrace)(trace_t *results, const vec3_t start, const vec3_t end,
                                const vec3_t mins, const vec3_t maxs, int headnode,
                                int brushmask, qboolean cylinder);
@@ -138,7 +138,7 @@ typedef struct {
                                           qboolean cylinder);
     clipHandle_t (*CM_TempBoxModel)(const vec3_t mins, const vec3_t maxs, int contents);
     int         (*CM_MarkFragments)(int numPoints, const vec3_t *points, const vec3_t projection,
-                                    int maxPoints, vec3_t pointBuffer, int maxFragments,
+                                    int maxPoints, vec3_t* pointBuffer, int maxFragments,
                                     markFragment_t *fragmentBuffer);
 
     /* --- Sound --- */

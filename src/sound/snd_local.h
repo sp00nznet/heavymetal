@@ -3,7 +3,7 @@
  *
  * The original FAKK2 used RAD Game Tools' Miles Sound System,
  * a commercial third-party audio library. The recomp replaces this
- * with SDL2 audio (and potentially OpenAL for 3D audio).
+ * with SDL3 audio (and potentially OpenAL for 3D audio).
  *
  * FAKK2's audio features:
  *   - 3D positional audio
@@ -77,7 +77,7 @@ void    S_UpdateListener(const vec3_t origin, const vec3_t forward,
                          const vec3_t right, const vec3_t up);
 
 /* =========================================================================
- * SDL2 backend (snd_sdl.c)
+ * SDL3 backend (snd_sdl.c)
  * ========================================================================= */
 
 qboolean        SND_Init(void);

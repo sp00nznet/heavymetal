@@ -468,8 +468,8 @@ static void Script_RunThread(scriptThread_t *thread) {
             char consoleLine[1024];
             consoleLine[0] = '\0';
             for (int i = 0; i < args.argc; i++) {
-                if (i > 0) Q_strcat(consoleLine, sizeof(consoleLine), " ");
-                Q_strcat(consoleLine, sizeof(consoleLine), args.argv[i]);
+                if (i > 0) strncat(consoleLine, " ", strlen(consoleLine) + 1);
+                strncat(consoleLine, args.argv[i], strlen(consoleLine) + strlen(args.argv[i]));
             }
             Cbuf_AddText(consoleLine);
             Cbuf_AddText("\n");

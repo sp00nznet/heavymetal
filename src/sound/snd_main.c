@@ -1,7 +1,7 @@
 /*
  * snd_main.c -- Sound system core
  *
- * Replaces Miles Sound System with SDL2 audio.
+ * Replaces Miles Sound System with SDL3 audio.
  * Provides all sound functions needed by both game_import_t and
  * clientGameImport_t function pointer tables.
  *
@@ -21,7 +21,7 @@ static qboolean snd_initialized = qfalse;
 
 void S_Init(void) {
     Com_Printf("--- S_Init ---\n");
-    Com_Printf("Sound: SDL2 audio (replacing Miles Sound System)\n");
+    Com_Printf("Sound: SDL3 audio (replacing Miles Sound System)\n");
 
     if (SND_Init()) {
         snd_initialized = qtrue;
@@ -41,7 +41,7 @@ void S_Shutdown(void) {
 
 void S_Update(void) {
     if (!snd_initialized) return;
-    /* SDL2 callback-based mixing handles output automatically.
+    /* SDL3 callback-based mixing handles output automatically.
      * This is called per-frame for any housekeeping needed. */
 }
 
@@ -71,6 +71,33 @@ void S_StartLocalSoundName(const char *sound_name) {
     /* Register on the fly and play */
     sfxHandle_t sfx = SND_RegisterSound(sound_name);
     SND_StartSound(NULL, 0, 0, sfx, 1.0f, 0.0f, 1.0f);
+}
+
+
+/* =========================================================================
+ * Reverb and ambient volume
+ * ========================================================================= */
+
+/* Current reverb state -- stored for the sound mixer.
+ * Full reverb DSP requires an effects pipeline; for now we store the
+ * state so it can be queried by the mixer when DSP is added later. */
+static int   s_reverbType = 0;
+static float s_reverbLevel = 0.0f;
+
+void S_SetReverb(int reverb_type, float reverb_level) {
+    s_reverbType = reverb_type;
+    s_reverbLevel = reverb_level;
+    Com_DPrintf("S_SetReverb: type=%d level=%.2f\n", reverb_type, reverb_level);
+}
+
+/* Global ambient volume scale (0.0 - 1.0) applied to all looping sounds */
+static float s_ambientVolume = 1.0f;
+
+void S_SetGlobalAmbientVolumeLevel(float volume) {
+    s_ambientVolume = volume;
+    if (s_ambientVolume < 0.0f) s_ambientVolume = 0.0f;
+    if (s_ambientVolume > 1.0f) s_ambientVolume = 1.0f;
+    Com_DPrintf("S_SetGlobalAmbientVolumeLevel: %.2f\n", volume);
 }
 
 /* =========================================================================
@@ -323,33 +350,6 @@ void MUSIC_UpdateVolume(float volume, float fade_time) {
         SND_SetVolume(-1.0f, volume); /* -1 = don't change master */
     }
 }
-
-/* =========================================================================
- * Reverb and ambient volume
- * ========================================================================= */
-
-/* Current reverb state -- stored for the sound mixer.
- * Full reverb DSP requires an effects pipeline; for now we store the
- * state so it can be queried by the mixer when DSP is added later. */
-static int   s_reverbType = 0;
-static float s_reverbLevel = 0.0f;
-
-void S_SetReverb(int reverb_type, float reverb_level) {
-    s_reverbType = reverb_type;
-    s_reverbLevel = reverb_level;
-    Com_DPrintf("S_SetReverb: type=%d level=%.2f\n", reverb_type, reverb_level);
-}
-
-/* Global ambient volume scale (0.0 - 1.0) applied to all looping sounds */
-static float s_ambientVolume = 1.0f;
-
-void S_SetGlobalAmbientVolumeLevel(float volume) {
-    s_ambientVolume = volume;
-    if (s_ambientVolume < 0.0f) s_ambientVolume = 0.0f;
-    if (s_ambientVolume > 1.0f) s_ambientVolume = 1.0f;
-    Com_DPrintf("S_SetGlobalAmbientVolumeLevel: %.2f\n", volume);
-}
-
 /* =========================================================================
  * Lip sync (Babble system)
  *

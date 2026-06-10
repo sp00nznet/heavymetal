@@ -379,120 +379,120 @@ static void Ghost_ParseEmitterDef(ghostEmitterDef_t *def, const char **data) {
     def->spawnRate = 10.0f;
 
     while (1) {
-        token = COM_Parse(data);
+        token = COM_Parse((char**)data);
         if (!token[0] || token[0] == '}') break;
 
         if (!Q_stricmp(token, "spawnrate")) {
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             def->spawnRate = (float)atof(token);
         }
         else if (!Q_stricmp(token, "burst")) {
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             def->burstCount = atoi(token);
         }
         else if (!Q_stricmp(token, "emitterlife") || !Q_stricmp(token, "emitterLife")) {
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             def->emitterLife = (float)atof(token);
         }
         else if (!Q_stricmp(token, "life")) {
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             def->particleLife = (float)atof(token);
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             if (token[0]) def->particleLifeRand = (float)atof(token);
         }
         else if (!Q_stricmp(token, "speed")) {
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             def->speed = (float)atof(token);
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             if (token[0]) def->speedRand = (float)atof(token);
         }
         else if (!Q_stricmp(token, "spread")) {
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             def->spreadAngle = (float)atof(token);
         }
         else if (!Q_stricmp(token, "gravity")) {
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             def->gravity = (float)atof(token);
         }
         else if (!Q_stricmp(token, "drag")) {
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             def->drag = (float)atof(token);
         }
         else if (!Q_stricmp(token, "bounce")) {
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             def->bounce = (float)atof(token);
             def->collide = (def->bounce > 0.0f);
         }
         else if (!Q_stricmp(token, "size")) {
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             def->sizeStart = (float)atof(token);
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             if (token[0]) def->sizeStartRand = (float)atof(token);
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             if (token[0]) def->sizeEnd = (float)atof(token);
         }
         else if (!Q_stricmp(token, "rotation")) {
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             def->rotationStart = (float)atof(token);
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             if (token[0]) def->rotationStartRand = (float)atof(token);
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             if (token[0]) def->rotationSpeed = (float)atof(token);
         }
         else if (!Q_stricmp(token, "color")) {
             /* color r1 g1 b1 a1  r2 g2 b2 a2 */
             for (int i = 0; i < 4; i++) {
-                token = COM_Parse(data);
+                token = COM_Parse((char**)data);
                 def->colorStart[i] = (float)atof(token);
             }
             for (int i = 0; i < 4; i++) {
-                token = COM_Parse(data);
+                token = COM_Parse((char**)data);
                 if (token[0]) def->colorEnd[i] = (float)atof(token);
             }
         }
         else if (!Q_stricmp(token, "shader")) {
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             Q_strncpyz(def->shaderName, token, sizeof(def->shaderName));
         }
         else if (!Q_stricmp(token, "direction")) {
             for (int i = 0; i < 3; i++) {
-                token = COM_Parse(data);
+                token = COM_Parse((char**)data);
                 def->velocityDir[i] = (float)atof(token);
             }
             VectorNormalize(def->velocityDir);
         }
         else if (!Q_stricmp(token, "shape")) {
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             if (!Q_stricmp(token, "sphere")) {
                 def->shape = GHOST_SHAPE_SPHERE;
-                token = COM_Parse(data);
+                token = COM_Parse((char**)data);
                 def->shapeRadius = (float)atof(token);
             } else if (!Q_stricmp(token, "box")) {
                 def->shape = GHOST_SHAPE_BOX;
                 for (int i = 0; i < 3; i++) {
-                    token = COM_Parse(data);
+                    token = COM_Parse((char**)data);
                     def->shapeSize[i] = (float)atof(token);
                 }
             } else if (!Q_stricmp(token, "cylinder")) {
                 def->shape = GHOST_SHAPE_CYLINDER;
-                token = COM_Parse(data);
+                token = COM_Parse((char**)data);
                 def->shapeRadius = (float)atof(token);
-                token = COM_Parse(data);
+                token = COM_Parse((char**)data);
                 def->shapeHeight = (float)atof(token);
             } else if (!Q_stricmp(token, "cone")) {
                 def->shape = GHOST_SHAPE_CONE;
-                token = COM_Parse(data);
+                token = COM_Parse((char**)data);
                 def->shapeRadius = (float)atof(token);
-                token = COM_Parse(data);
+                token = COM_Parse((char**)data);
                 def->shapeHeight = (float)atof(token);
             } else if (!Q_stricmp(token, "line")) {
                 def->shape = GHOST_SHAPE_LINE;
-                token = COM_Parse(data);
+                token = COM_Parse((char**)data);
                 def->shapeRadius = (float)atof(token);
             }
         }
         else if (!Q_stricmp(token, "rendermode")) {
-            token = COM_Parse(data);
+            token = COM_Parse((char**)data);
             if (!Q_stricmp(token, "sprite"))    def->renderMode = GHOST_RENDER_SPRITE;
             else if (!Q_stricmp(token, "oriented")) def->renderMode = GHOST_RENDER_ORIENTED;
             else if (!Q_stricmp(token, "beam"))  def->renderMode = GHOST_RENDER_BEAM;
@@ -536,8 +536,8 @@ qboolean Ghost_LoadEffect(const char *filename) {
     memset(eff, 0, sizeof(*eff));
     Q_strncpyz(eff->name, filename, sizeof(eff->name));
 
-    const char *data = (const char *)buffer;
-    const char *token;
+    char *data = (char *)buffer;
+    char *token;
 
     while (1) {
         token = COM_Parse(&data);
@@ -549,7 +549,7 @@ qboolean Ghost_LoadEffect(const char *filename) {
                 if (token[0] != '{') {
                     token = COM_Parse(&data);
                 }
-                Ghost_ParseEmitterDef(&eff->emitters[eff->numEmitters], &data);
+                Ghost_ParseEmitterDef(&eff->emitters[eff->numEmitters], (const char**)&data);
                 eff->numEmitters++;
             }
         }

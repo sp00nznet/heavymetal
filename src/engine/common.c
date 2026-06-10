@@ -143,7 +143,7 @@ void Com_Error(int code, const char *fmt, ...) {
 void Com_Init(int argc, char **argv) {
     Com_Printf("--- Com_Init ---\n");
 
-    /* Platform init (SDL2, timers, etc.) */
+    /* Platform init (SDL3, timers, etc.) */
     Sys_Init();
 
     /* Memory manager */
@@ -301,7 +301,7 @@ static zoneHeader_t zone_head;      /* sentinel node */
 static int          zone_count;     /* number of active allocations */
 static int          zone_bytes;     /* total bytes in active allocations */
 
-static void Z_Init(void) {
+void Z_Init(void) {
     zone_head.next = &zone_head;
     zone_head.prev = &zone_head;
     zone_head.magic = ZONE_MAGIC;
@@ -406,7 +406,7 @@ static struct {
     int     initialized;
 } hunk;
 
-static void Hunk_Init(void) {
+void Hunk_Init(void) {
     hunk.base = (byte *)malloc(HUNK_SIZE);
     if (!hunk.base) {
         Com_Error(ERR_FATAL, "Hunk_Init: failed to allocate %d MB", HUNK_SIZE / (1024*1024));
@@ -462,7 +462,7 @@ void Hunk_Clear(void) {
 int Com_EventLoop(void) {
     /* In the original engine, this pumps the system event queue
      * (keyboard, mouse, network packets) and dispatches them.
-     * In the recomp, SDL2 event processing is done in Win_ProcessEvents()
+     * In the recomp, SDL3 event processing is done in Win_ProcessEvents()
      * which is called from CL_Frame(). This function remains for
      * compatibility with code that calls it directly. */
     return 0;

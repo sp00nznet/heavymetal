@@ -203,6 +203,20 @@ static void Con_TabComplete(void) {
  * Input handling
  * ========================================================================= */
 
+void Con_CharEvent(int ch) {
+    /* Insert printable character at cursor */
+    if (ch < 32 || ch >= 127) return;
+    if (con.inputLen >= CON_MAX_INPUT - 1) return;
+
+    /* Make room at cursor */
+    memmove(con.input + con.inputCursor + 1,
+            con.input + con.inputCursor,
+            con.inputLen - con.inputCursor + 1);
+    con.input[con.inputCursor] = (char)ch;
+    con.inputCursor++;
+    con.inputLen++;
+}
+
 void Con_KeyEvent(int key, qboolean down) {
     if (!down) return;
 
@@ -314,21 +328,10 @@ void Con_KeyEvent(int key, qboolean down) {
         case K_TAB:
             Con_TabComplete();
             break;
+	default:
+	    Con_CharEvent(key);
+	    break;
     }
-}
-
-void Con_CharEvent(int ch) {
-    /* Insert printable character at cursor */
-    if (ch < 32 || ch >= 127) return;
-    if (con.inputLen >= CON_MAX_INPUT - 1) return;
-
-    /* Make room at cursor */
-    memmove(con.input + con.inputCursor + 1,
-            con.input + con.inputCursor,
-            con.inputLen - con.inputCursor + 1);
-    con.input[con.inputCursor] = (char)ch;
-    con.inputCursor++;
-    con.inputLen++;
 }
 
 /* =========================================================================

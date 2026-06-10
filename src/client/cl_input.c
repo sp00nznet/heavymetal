@@ -5,7 +5,7 @@
  * FAKK2's input system supports:
  *   - Keyboard (from default.cfg bindings)
  *   - Mouse (with +attackleft/+attackright for dual-wielding)
- *   - Joystick (via SDL2 game controller API)
+ *   - Joystick (via SDL3 game controller API)
  *
  * The +command/-command system:
  *   "+forward" on key press -> sets forward move

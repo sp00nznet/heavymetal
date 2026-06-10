@@ -35,7 +35,7 @@ The original `fakk2.exe` has **relocations stripped** (`IMAGE_FILE_RELOCS_STRIPP
 The engine uses OpenGL 1.x immediate-mode rendering calls. Modern GPU drivers have dropped or poorly support this legacy path. Our renderer targets OpenGL 4.x core profile.
 
 ### 3. Timing Precision
-The original uses `timeGetTime()` from WINMM.DLL with `timeBeginPeriod(1)`. Windows 10/11 changed timer resolution behavior, causing frame timing issues and physics instability. SDL2's high-resolution timer solves this.
+The original uses `timeGetTime()` from WINMM.DLL with `timeBeginPeriod(1)`. Windows 10/11 changed timer resolution behavior, causing frame timing issues and physics instability. SDL3's high-resolution timer solves this.
 
 ### 4. No DEP/NX Support
 The original has no NX-compatible exception handling (`IMAGE_DLLCHARACTERISTICS_NX_COMPAT` not set). Modern Windows enforces DEP by default. The recomp is fully DEP-compatible.
@@ -47,10 +47,10 @@ The original validates that the game disc is inserted. This is incompatible with
 Install path and CD key are stored in the Windows registry. The recomp uses config files instead.
 
 ### 7. DirectInput
-Mouse/keyboard input uses DirectInput, which is deprecated. SDL2 provides the replacement.
+Mouse/keyboard input uses DirectInput, which is deprecated. SDL3 provides the replacement.
 
 ### 8. Miles Sound System
-The commercial audio middleware may have compatibility issues with modern audio drivers. SDL2 audio replaces it.
+The commercial audio middleware may have compatibility issues with modern audio drivers. SDL3 audio replaces it.
 
 ## Binary Architecture
 
@@ -89,13 +89,13 @@ The commercial audio middleware may have compatibility issues with modern audio 
 Core OS: memory management, file I/O, threading, process management. The DLLs use only CRT runtime support functions (~61 each); the EXE adds file operations, threading, and directory management.
 
 ### USER32.DLL (50 functions)
-Window management, message pump, input, clipboard, display mode switching. Replaced by SDL2.
+Window management, message pump, input, clipboard, display mode switching. Replaced by SDL3.
 
 ### GDI32.DLL (14 functions)
-OpenGL pixel format setup (`DescribePixelFormat`, `SetPixelFormat`, `SwapBuffers`), gamma ramp control, font rendering, splash screen. Replaced by SDL2 + modern GL.
+OpenGL pixel format setup (`DescribePixelFormat`, `SetPixelFormat`, `SwapBuffers`), gamma ramp control, font rendering, splash screen. Replaced by SDL3 + modern GL.
 
 ### WINMM.DLL (11 functions)
-Joystick input (`joyGetDevCapsA`, `joyGetPosEx`), MIDI input (5 functions for custom controllers), timing (`timeGetTime`, `timeBeginPeriod`). Joystick via SDL2, MIDI input via SDL2 or removed, timing via SDL2.
+Joystick input (`joyGetDevCapsA`, `joyGetPosEx`), MIDI input (5 functions for custom controllers), timing (`timeGetTime`, `timeBeginPeriod`). Joystick via SDL3, MIDI input via SDL3 or removed, timing via SDL3.
 
 ### WSOCK32.DLL (17 functions)
 Full UDP/TCP networking: socket, bind, connect, send/recv, DNS. Uses native Winsock2/BSD sockets in recomp.
@@ -104,7 +104,7 @@ Full UDP/TCP networking: socket, bind, connect, send/recv, DNS. Uses native Wins
 Windows registry (5 functions) and `GetUserNameA`. Registry replaced with config files.
 
 ### OpenGL (loaded dynamically)
-Not in import table -- loaded via `LoadLibraryA`/`GetProcAddress` at runtime. Standard for Q3-engine games. The recomp uses SDL2's GL loader.
+Not in import table -- loaded via `LoadLibraryA`/`GetProcAddress` at runtime. Standard for Q3-engine games. The recomp uses SDL3's GL loader.
 
 ## Module Communication
 

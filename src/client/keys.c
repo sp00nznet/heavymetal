@@ -298,7 +298,7 @@ void Key_KeyEvent(int key, qboolean down, unsigned int time) {
         /* Console handles its own key processing in console.c */
         /* Pass through to Con_KeyEvent */
         extern void Con_KeyEvent(int key, qboolean down);
-        if (down) Con_KeyEvent(key, down);
+        if(down) Con_KeyEvent(key,down);
         return;
     }
 

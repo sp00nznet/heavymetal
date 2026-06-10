@@ -6,7 +6,7 @@
  *
  * The original WinMain creates the game window, initializes DirectInput,
  * sets up the OpenGL context, and enters the main game loop.
- * In the recomp, SDL2 handles all platform-specific initialization.
+ * In the recomp, SDL3 handles all platform-specific initialization.
  */
 
 #include "qcommon.h"
@@ -23,7 +23,7 @@ static qboolean fakk_running = qtrue;
  * Main entry point
  *
  * Original was WinMain (Win32 GUI subsystem).
- * Recomp uses standard main() with SDL2.
+ * Recomp uses standard main() with SDL3.
  * ========================================================================= */
 
 int main(int argc, char **argv) {

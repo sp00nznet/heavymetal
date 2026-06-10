@@ -9,7 +9,7 @@
  *   CA_DISCONNECTED -> CA_CONNECTING -> CA_CONNECTED -> CA_LOADING -> CA_ACTIVE
  *
  * The client's frame consists of:
- *   1. Process window events (SDL2 pump)
+ *   1. Process window events (SDL3 pump)
  *   2. Process input (mouse/keyboard)
  *   3. Send user commands to server
  *   4. Receive and process snapshots from server
@@ -35,6 +35,7 @@ extern void R_ClearScene(void);
 extern void R_RenderScene(const refdef_t *fd);
 extern void R_GetGlconfig(glconfig_t *config);
 extern void R_SetColor(const float *rgba);
+extern void R_AddRefEntityToScene(refEntity_t *ent);
 extern void R_DrawFillRect(float x, float y, float w, float h,
                            float r, float g, float b, float a);
 extern void R_DrawString(float x, float y, const char *str,

@@ -12,6 +12,7 @@
 #define G_PUBLIC_H
 
 #include "fakk_types.h"
+#include "q_shared.h"
 
 #ifdef __cplusplus
 extern "C" {

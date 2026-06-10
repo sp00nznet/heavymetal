@@ -21,6 +21,7 @@
  */
 
 #include "../common/qcommon.h"
+#include "../common/qfiles.h"
 #include "tr_types.h"
 #include "r_gl.h"
 #include <string.h>

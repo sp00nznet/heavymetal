@@ -23,6 +23,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifndef _MSC_VER
+#include <sys/types.h>
+#include <dirent.h>
+#endif
+
 /* =========================================================================
  * Filesystem state
  * ========================================================================= */

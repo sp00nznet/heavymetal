@@ -9,6 +9,7 @@
 #define TR_TYPES_H
 
 #include "../common/fakk_types.h"
+#include "../../src/tiki/tiki.h"
 
 /* =========================================================================
  * Render entity -- passed from game to renderer for drawing

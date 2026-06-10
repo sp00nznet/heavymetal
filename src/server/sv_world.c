@@ -75,6 +75,18 @@ playerState_t *SV_GetClientPlayerState(int clientNum) {
  * Entity linking
  * ========================================================================= */
 
+void SV_UnlinkEntity(gentity_t *ent) {
+    if (!ent || !ent->linked) return;
+
+    int slot = ent->s.number;
+    if (slot >= 0 && slot < MAX_WORLD_ENTITIES) {
+        sv_worldEntities[slot].linked = qfalse;
+        sv_worldEntities[slot].ent = NULL;
+    }
+
+    ent->linked = qfalse;
+}
+
 void SV_LinkEntity(gentity_t *ent) {
     if (!ent) return;
 
@@ -106,18 +118,6 @@ void SV_LinkEntity(gentity_t *ent) {
 
     ent->linked = qtrue;
     ent->linkcount++;
-}
-
-void SV_UnlinkEntity(gentity_t *ent) {
-    if (!ent || !ent->linked) return;
-
-    int slot = ent->s.number;
-    if (slot >= 0 && slot < MAX_WORLD_ENTITIES) {
-        sv_worldEntities[slot].linked = qfalse;
-        sv_worldEntities[slot].ent = NULL;
-    }
-
-    ent->linked = qfalse;
 }
 
 /* =========================================================================

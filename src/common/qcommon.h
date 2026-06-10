@@ -200,11 +200,13 @@ typedef enum {
     TAG_STATIC
 } memtag_t;
 
+void    Z_Init(void);
 void    *Z_Malloc(int size);
 void    *Z_TagMalloc(int size, memtag_t tag);
 void    Z_Free(void *ptr);
 void    Z_FreeTags(memtag_t tag);
 
+void    Hunk_Init();
 void    *Hunk_Alloc(int size);
 void    Hunk_Clear(void);
 

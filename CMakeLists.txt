@@ -3,8 +3,10 @@ project(fakk2-recomp VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS ON)
 
 # =============================================================================
 # Heavy Metal: FAKK2 Static Recompilation
@@ -22,7 +24,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(FAKK_RENDERER_GL4   "Build with OpenGL 4.x renderer backend"  ON)
 option(FAKK_RENDERER_VULKAN "Build with Vulkan renderer backend"     OFF)
 option(FAKK_BUILD_TOOLS    "Build analysis and asset tools"          ON)
-option(FAKK_USE_SDL2       "Use SDL2 for platform abstraction"       ON)
+option(FAKK_USE_SDL3       "Use SDL3 for platform abstraction"       ON)
 
 # -----------------------------------------------------------------------------
 # Platform detection
@@ -44,9 +46,9 @@ add_definitions(-DFAKK_64BIT)
 # -----------------------------------------------------------------------------
 # Dependencies
 # -----------------------------------------------------------------------------
-if(FAKK_USE_SDL2)
-    find_package(SDL2 REQUIRED)
-    add_definitions(-DUSE_SDL2)
+if(FAKK_USE_SDL3)
+    find_package(SDL3 REQUIRED)
+    add_definitions(-DUSE_SDL3)
 endif()
 
 find_package(OpenGL REQUIRED)
@@ -195,8 +197,8 @@ target_include_directories(fakk2 PRIVATE
     src/ghost
 )
 
-if(FAKK_USE_SDL2)
-    target_link_libraries(fakk2 PRIVATE SDL2::SDL2 SDL2::SDL2main)
+if(FAKK_USE_SDL3)
+    target_link_libraries(fakk2 PRIVATE SDL3::SDL3)
 endif()
 
 target_link_libraries(fakk2 PRIVATE OpenGL::GL)
@@ -217,7 +219,7 @@ message(STATUS "")
 message(STATUS "=== Heavy Metal: FAKK2 Recomp ===")
 message(STATUS "  Version:    ${PROJECT_VERSION}")
 message(STATUS "  Renderer:   ${FAKK_RENDERER_GL4} (GL4) / ${FAKK_RENDERER_VULKAN} (Vulkan)")
-message(STATUS "  SDL2:       ${FAKK_USE_SDL2}")
+message(STATUS "  SDL3:       ${FAKK_USE_SDL3}")
 message(STATUS "  Tools:      ${FAKK_BUILD_TOOLS}")
 message(STATUS "================================")
 message(STATUS "")

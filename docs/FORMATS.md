@@ -108,7 +108,7 @@ Standard Q3 lumps plus Ritual additions for terrain, portals, etc.
 Standard PCM wave audio. Used for sound effects.
 
 ### OGG / MP3
-Music files (streamed via Miles Sound System). The recomp will need a decoder (SDL2_mixer, stb_vorbis, or dr_mp3).
+Music files (streamed via Miles Sound System). The recomp will need a decoder (SDL3_mixer, stb_vorbis, or dr_mp3).
 
 ## Script/Config Formats
 

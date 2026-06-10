@@ -1,7 +1,7 @@
 /*
  * r_gl.c -- OpenGL function loading and rendering primitives
  *
- * Loads GL extension functions via SDL2 and provides core rendering
+ * Loads GL extension functions via SDL3 and provides core rendering
  * operations: buffer management, 2D drawing, viewport setup.
  *
  * The original FAKK2 renderer uses fixed-function OpenGL with

@@ -873,7 +873,7 @@ static int CM_ClipPolyByPlane(const vec3_t *in, int numIn, vec3_t *out,
 }
 
 int CM_MarkFragments(int numPoints, const vec3_t *points, const vec3_t projection,
-                     int maxPoints, vec3_t pointBuffer, int maxFragments,
+                     int maxPoints, vec3_t* pointBuffer, int maxFragments,
                      markFragment_t *fragmentBuffer) {
     if (numPoints < 3 || !points || !pointBuffer || !fragmentBuffer) return 0;
     if (maxPoints < 3 || maxFragments < 1) return 0;
