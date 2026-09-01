@@ -5560,5 +5560,71 @@
     "address_int": 5031630,
     "name": "sub_004CC6CE",
     "source": "unresolved dispatch at runtime (split function)"
+  },
+  {
+    "address": "0x00422020",
+    "address_int": 4333600,
+    "name": "sub_00422020",
+    "source": "unresolved dispatch at runtime (split function)"
+  },
+  {
+    "address": "0x00422190",
+    "address_int": 4333968,
+    "name": "sub_00422190",
+    "source": "unresolved dispatch at runtime (split function)"
+  },
+  {
+    "address": "0x0042CC4D",
+    "address_int": 4377677,
+    "name": "sub_0042CC4D",
+    "source": "unresolved dispatch at runtime (split function)"
+  },
+  {
+    "address": "0x00457580",
+    "address_int": 4552064,
+    "name": "sub_00457580",
+    "source": "unresolved dispatch at runtime (split function)"
+  },
+  {
+    "address": "0x004CAA20",
+    "address_int": 5024288,
+    "name": "sub_004CAA20",
+    "source": "unresolved dispatch at runtime (split function)"
+  },
+  {
+    "address": "0x004CAAFE",
+    "address_int": 5024510,
+    "name": "sub_004CAAFE",
+    "source": "unresolved dispatch at runtime (split function)"
+  },
+  {
+    "address": "0x004CAB49",
+    "address_int": 5024585,
+    "name": "sub_004CAB49",
+    "source": "unresolved dispatch at runtime (split function)"
+  },
+  {
+    "address": "0x00456E30",
+    "address_int": 4550192,
+    "name": "sub_00456E30",
+    "source": "unresolved dispatch at runtime (split function)"
+  },
+  {
+    "address": "0x00456E50",
+    "address_int": 4550224,
+    "name": "sub_00456E50",
+    "source": "unresolved dispatch at runtime (split function)"
+  },
+  {
+    "address": "0x004221A0",
+    "address_int": 4333984,
+    "name": "sub_004221A0",
+    "source": "unresolved dispatch at runtime (split function)"
+  },
+  {
+    "address": "0x00457FE0",
+    "address_int": 4554720,
+    "name": "sub_00457FE0",
+    "source": "unresolved dispatch at runtime (split function)"
   }
 ]

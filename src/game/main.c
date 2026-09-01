@@ -191,6 +191,20 @@ static int launcher_main(void) {
         TerminateProcess(pi.hProcess, 1);
         return 1;
     }
+    /* Put the child in a job that dies with us. Without this, killing the
+     * launcher (a timeout, Ctrl-C, a debugger) leaves the child running -- and
+     * a child still holding the machine's attention is exactly how a half-done
+     * bring-up gets left on screen. */
+    {
+        HANDLE job = CreateJobObjectA(NULL, NULL);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = { 0 };
+        jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (job && SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                                           &jeli, sizeof jeli))
+            AssignProcessToJobObject(job, pi.hProcess);
+        /* deliberately not closed: the handle is the leash */
+    }
+
     ResumeThread(pi.hThread);
     CloseHandle(pi.hThread);
     WaitForSingleObject(pi.hProcess, INFINITE);

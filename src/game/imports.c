@@ -21,7 +21,9 @@ int            g_trace_strings;  /* FAKK2_TRACE_STR (main.c) */
 
 /* Addresses handed out by GetProcAddress, so a later call through one of them
  * can be named (and eventually forwarded). See recomp_native_call. */
-#define MAX_DYNAMIC 256
+/* The GL driver alone resolves several hundred entry points, and one that
+ * does not fit here is a call we cannot name or bridge. */
+#define MAX_DYNAMIC 2048
 static struct { uint32_t addr; char name[64]; } g_dynamic[MAX_DYNAMIC];
 static unsigned g_dynamic_count;
 
@@ -168,6 +170,58 @@ static void import_thunk(void) {
                 fprintf(stderr, "[str] %s(\"%.200s\")\n", imp->name,
                         (const char*)(uintptr_t)args[watch[w].arg]);
     }
+
+    /*
+     * NEVER change the display mode.
+     *
+     * The engine goes fullscreen by calling ChangeDisplaySettings with its own
+     * 640x480 mode. That reaches the real monitors, and if the process then
+     * dies mid-bring-up -- which during a bring-up is most of the time, and
+     * which a debugger or a timeout makes certain -- the desktop is left in
+     * that mode, on every attached display. It cost a developer their monitor
+     * layout once already.
+     *
+     * Report success and do nothing: the engine believes it is fullscreen and
+     * carries on, its window is a plain 640x480 window, and nothing outside
+     * the process is touched. When this project grows a real video HAL,
+     * fullscreen belongs there (borderless at the desktop mode), not here.
+     */
+    if (strncmp(imp->name, "ChangeDisplaySettings", 21) == 0) {
+        static int said;
+        if (!said++) fprintf(stderr, "[video] %s ignored: the recomp never "
+                                     "changes the desktop mode\n", imp->name);
+        g_eax = 0;                       /* DISP_CHANGE_SUCCESSFUL */
+        g_esp += 4 + (uint32_t)(imp->nargs > 0 ? imp->nargs : 0) * 4;
+        return;
+    }
+
+    /* DLLs we deliberately do not provide.
+     *
+     * dinput.dll: the game asks for DirectInput 7 and, once it has one, drives
+     * it entirely through COM vtables -- native addresses with no name and no
+     * signature, so there is nothing to bridge them by. Failing the load makes
+     * the engine take its Win32 input path instead, which arrives through the
+     * WndProc trampoline we already own. DirectInput 7 is a dead end on modern
+     * Windows regardless; input belongs in the HAL, not in a 2000 COM object. */
+    if (n >= 1 && strcmp(imp->name, "LoadLibraryA") == 0 && args[0] > 0x10000) {
+        static const char* deny[] = { "dinput.dll" };
+        const char* want = (const char*)(uintptr_t)args[0];
+        for (unsigned d = 0; d < sizeof deny / sizeof deny[0]; d++)
+            if (_stricmp(want, deny[d]) == 0) {
+                fprintf(stderr, "[import] LoadLibraryA(\"%s\") denied on purpose\n", want);
+                g_eax = 0;
+                g_esp += 4 + (uint32_t)imp->nargs * 4;
+                return;
+            }
+    }
+
+    /* The engine's console output. Quake-family engines print by appending to
+     * an edit control with EM_REPLACESEL, so this is Com_Printf reaching the
+     * screen -- the single most useful thing to see during bring-up. */
+    if (n >= 4 && args[1] == 0x00C2 /* EM_REPLACESEL */ && args[3] > 0x10000 &&
+        (strcmp(imp->name, "SendMessageA") == 0 ||
+         strcmp(imp->name, "PostMessageA") == 0))
+        fprintf(stderr, "[con] %.400s", (const char*)(uintptr_t)args[3]);
 
     /* Callbacks: an argument that is the address of one of the game's own
      * functions cannot be passed to Windows as-is. Swap in a trampoline. */

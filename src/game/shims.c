@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <malloc.h>
+#include <string.h>
 #include "recomp_types.h"
 
 #define SHIM_ARG(n) MEM32(g_esp + 4 + (n) * 4)
@@ -116,3 +117,12 @@ void sub_004C20EE(void) {
 
 /* _tzset(void) at 0x004C87FC -- deliberately does nothing. See run_lift.py. */
 void sub_004C87FC(void) { SHIM_RET(); }
+
+/* memcpy(dst, src, n) at 0x004C9FC0 -- the body checks for overlap, so this is
+ * memmove semantics. Returns dst, like the original. */
+void sub_004C9FC0(void) {
+    uint32_t dst = SHIM_ARG(0);
+    memmove(FROM_VA(dst), FROM_VA(SHIM_ARG(1)), SHIM_ARG(2));
+    g_eax = dst;
+    SHIM_RET();
+}

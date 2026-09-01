@@ -32,6 +32,7 @@ import json
 import time
 import re
 import struct
+import bisect
 
 
 # ---- Inlined from generate.py (can't import due to path issues) ----
@@ -73,6 +74,18 @@ class LinearInstruction:
 
     def __repr__(self):
         return f"0x{self.address:08X}: {self.mnemonic} {self.op_str}"
+
+
+def find_call_targets(code_data, code_start, code_end):
+    """Direct `call rel32` targets -- the entries we are sure about."""
+    out = set()
+    for i in range(len(code_data) - 5):
+        if code_data[i] == 0xE8:
+            rel = struct.unpack_from('<i', code_data, i + 1)[0]
+            target = (code_start + i + 5 + rel) & 0xFFFFFFFF
+            if code_start <= target < code_end:
+                out.add(target)
+    return out
 
 
 def find_entries(code_data, code_start, code_end):
@@ -137,6 +150,15 @@ HOST_SHIM = {
     0x004C20EE,  # sprintf         -> host vsprintf
     0x004C2A6E,  # vsprintf        -> host vsprintf
 
+    0x004C9FC0,  # memcpy/memmove -> host memmove. MSVC 6's is a block-copy
+                 #   engine that dispatches its head and tail bytes through
+                 #   jump tables; when an index lands outside one the switch
+                 #   falls to its default and tail-dispatches out of the
+                 #   function, leaving the frame unwound -- ESP comes back 12
+                 #   bytes short and the caller's `pop ebp` reads a return
+                 #   address. The body also checks for overlap, so it is
+                 #   memmove semantics, not memcpy.
+
     0x004C87FC,  # _tzset -> no-op. The lifted version leaves the _tzname
                  #   pointer at 0xFFFFFFFC and hands it to WideCharToMultiByte,
                  #   which faults writing the converted name. Nothing in a game
@@ -145,17 +167,28 @@ HOST_SHIM = {
 }
 
 
-JUMP_TABLE = None  # set in main(): (image_bytes, image_base) for table reads
+JUMP_TABLE = None    # set in main(): (image_bytes, image_base) for table reads
+CALL_TARGETS = set()  # set in main(): entries something actually calls
+CODE_RANGE = (0, 0)   # set in main(): [code_start, code_end) of the .text section
 
 
 def read_jump_table(insn, func_start, func_end):
-    """Arms of `jmp dword ptr [reg*4 + imm32]`, as far as they stay in range."""
+    """Arms of `jmp dword ptr [reg*4 + imm32]`.
+
+    The table ends where it stops pointing at code -- not where it stops
+    pointing INSIDE this function. A switch may dispatch to shared code
+    elsewhere, and stopping at the first such entry silently truncates the
+    table: the arms after it are never labelled, so at runtime the switch falls
+    to its default and tail-dispatches out of the function, leaving the frame
+    the prologue built unwound. The caller filters for what belongs here.
+    """
     if JUMP_TABLE is None or insn.mnemonic != 'jmp':
         return []
     m = re.match(r'^dword ptr \[\w+\*4 \+ (0x[0-9a-fA-F]+)\]$', insn.op_str)
     if not m:
         return []
     image, base = JUMP_TABLE
+    lo, hi = CODE_RANGE
     table = int(m.group(1), 16)
     out = []
     for i in range(256):
@@ -163,7 +196,7 @@ def read_jump_table(insn, func_start, func_end):
         if off < 0 or off + 4 > len(image):
             break
         tgt = struct.unpack_from('<I', image, off)[0]
-        if not (func_start <= tgt < func_end):
+        if not (lo <= tgt < hi):
             break
         out.append(tgt)
     return out
@@ -196,55 +229,177 @@ def decode_reaches(md, code_data, code_start, addr, stop):
     return not (0 < gap < MAX_SPLIT_GAP)
 
 
+def branches_past(md, code_data, code_start, code_end, start, end):
+    """The furthest place code in [start, end) branches TO at or beyond `end`.
+
+    A function does not jump into the middle of the next function, so a branch
+    across the boundary means the boundary is not one: `end` is a block inside
+    this function that the discovery scan mistook for an entry. Splitting there
+    is worse than not splitting -- the block's `ret` runs without the prologue
+    that allocated the frame, so ESP comes back short by the whole frame and the
+    caller's `pop ebp` picks up a return address instead.
+
+    Both kinds of branch count: a direct jcc/jmp, and the arms of a switch
+    (`jmp dword ptr [reg*4 + table]`), which land inside their own function too.
+    """
+    if JUMP_TABLE is None:
+        return None
+    off, n = start - code_start, end - start
+    if off < 0 or n <= 0 or off + n > len(code_data):
+        return None
+    image, base = JUMP_TABLE
+    best = None
+
+    def note(tgt):
+        nonlocal best
+        # Cap the reach: a wild target in mis-decoded data must not swallow the
+        # rest of the section.
+        if end <= tgt < min(end + 0x2000, code_end):
+            best = tgt if best is None else max(best, tgt)
+
+    for insn in md.disasm(code_data[off:off + n], start):
+        if insn.mnemonic == 'int3':
+            break
+        if insn.mnemonic in COND_JUMPS or insn.mnemonic == 'jmp':
+            if insn.operands and insn.operands[0].type == X86_OP_IMM:
+                note(insn.operands[0].imm & 0xFFFFFFFF)
+        if insn.mnemonic != 'jmp':
+            continue
+        m = re.match(r'^dword ptr \[\w+\*4 \+ (0x[0-9a-fA-F]+)\]$', insn.op_str)
+        if not m:
+            continue
+        table = int(m.group(1), 16)
+        for k in range(512):
+            o = table - base + k * 4
+            if o < 0 or o + 4 > len(image):
+                break
+            tgt = struct.unpack_from('<I', image, o)[0]
+            if not (code_start <= tgt < code_end):
+                break
+            note(tgt)
+    return best
+
+
+def falls_through(md, code_data, code_start, start, end):
+    """Does code decoded from `start` run off the end of [start, end)?
+
+    A real function ends in `ret` or a tail `jmp` (or the alignment padding
+    after one). Running straight into the next entry means that entry is not a
+    function -- it is the rest of this one.
+    """
+    off, n = start - code_start, end - start
+    if off < 0 or n <= 0 or off + n > len(code_data):
+        return False
+    last = None
+    for insn in md.disasm(code_data[off:off + n], start):
+        if insn.mnemonic in ('int3', 'nop'):
+            return False          # alignment padding: a real boundary follows
+        last = insn
+    if last is None or last.address + last.size != end:
+        return False              # did not decode cleanly up to the boundary
+    return last.mnemonic not in ('ret', 'retn', 'retf', 'jmp', 'iret')
+
+
 def resolve_func_end(md, code_data, code_start, code_end, entries, idx):
     """The end of the function at entries[idx], skipping split boundaries."""
     addr = entries[idx]
     j = idx + 1
+    end, nxt = None, None
     for _ in range(8):
         cand = entries[j] if j < len(entries) else code_end
         cand = min(cand, addr + 65536)
         if cand <= addr:
             break
         if decode_reaches(md, code_data, code_start, addr, cand):
-            return cand, (entries[j] if j < len(entries) else None)
+            end, nxt = cand, (entries[j] if j < len(entries) else None)
+            break
         j += 1
-    cand = entries[j] if j < len(entries) else code_end
-    return min(cand, addr + 65536), (entries[j] if j < len(entries) else None)
+    if end is None:
+        cand = entries[j] if j < len(entries) else code_end
+        end, nxt = min(cand, addr + 65536), (entries[j] if j < len(entries) else None)
+
+    # A switch dispatches into the middle of its own function. If an arm lands
+    # past the end we just picked, the entry we trimmed at is a switch arm, not
+    # a function -- and cutting there is worse than not splitting at all: the
+    # arm's `ret` runs without the prologue's frame, so ESP comes back short by
+    # the whole frame and the caller's `pop ebp` picks up a return address.
+    # Extend to the first entry past the last arm instead.
+    for _ in range(4):
+        if nxt is None or nxt in CALL_TARGETS:
+            break
+        reach = branches_past(md, code_data, code_start, code_end, addr, end)
+        if reach is None:
+            # No branch across it, but running straight into it is the same
+            # evidence: absorb one entry and look again.
+            if not falls_through(md, code_data, code_start, addr, end):
+                break
+            reach = end
+        k = bisect.bisect_right(entries, reach)
+        grown = entries[k] if k < len(entries) else code_end
+        grown = min(grown, addr + 65536)
+        if grown <= end:
+            break
+        end, nxt = grown, (entries[k] if k < len(entries) else None)
+    return end, nxt
 
 
 def linear_disassemble_function(md, code_data, code_start, func_start, func_end):
-    offset = func_start - code_start
-    size = func_end - func_start
-    if offset < 0 or offset + size > len(code_data):
-        return [], set()
-    raw = code_data[offset:offset + size]
-    instructions = []
+    """Decode one function by following its control flow.
+
+    Not linearly: MSVC leaves jump tables in the middle of a function, between
+    the computed jump and the code after it, and decoding those bytes as
+    instructions produces plausible-looking nonsense -- a `dec esp` out of a
+    table entry's low byte is enough to make the function return with ESP off
+    by a few bytes, which surfaces hundreds of calls later as a `pop ebp` that
+    picks up a return address. Walking the control flow means the tables are
+    simply never decoded.
+
+    Returns (instructions in address order, block leaders, switch arms).
+    """
+    by_addr = {}
     leaders = {func_start}
-    for insn in md.disasm(raw, func_start):
-        li = LinearInstruction(insn)
-        instructions.append(li)
-        if li.is_cond_jump:
-            target = li.get_branch_target()
-            if target and func_start <= target < func_end:
-                leaders.add(target)
-            leaders.add(li.end_address)
-        elif li.is_uncond_jump:
-            target = li.get_branch_target()
-            if target and func_start <= target < func_end:
-                leaders.add(target)
-            leaders.add(li.end_address)
+    arms = set()
+    pending = [func_start]
+
+    while pending:
+        addr = pending.pop()
+        while func_start <= addr < func_end and addr not in by_addr:
+            off = addr - code_start
+            if off < 0 or off >= len(code_data):
+                break
+            window = code_data[off:min(off + 16, func_end - code_start)]
+            insn = next(iter(md.disasm(window, addr)), None)
+            if insn is None:
+                break
+            li = LinearInstruction(insn)
+            by_addr[addr] = li
+            if li.mnemonic == 'int3':
+                break
+
             for arm in read_jump_table(li, func_start, func_end):
+                if not (func_start <= arm < func_end):
+                    continue   # a shared block elsewhere: let it tail-dispatch
+                arms.add(arm)
                 leaders.add(arm)
-        else:
-            for arm in read_jump_table(li, func_start, func_end):
-                leaders.add(arm)
-        if li.mnemonic == 'int3':
-            break
-    return instructions, leaders
+                pending.append(arm)
+
+            target = li.get_branch_target() if li.is_jump else None
+            if target is not None and func_start <= target < func_end:
+                leaders.add(target)
+                pending.append(target)
+
+            if li.is_uncond_jump or li.is_ret:
+                leaders.add(li.end_address)
+                break
+            if li.is_cond_jump:
+                leaders.add(li.end_address)
+            addr = li.end_address
+
+    return [by_addr[a] for a in sorted(by_addr)], leaders, arms
 
 
 def lift_function_linear(lifter, name, instructions, leaders, func_start,
-                         fallthrough=None):
+                         fallthrough=None, arms=None):
     lines = []
     lines.append(f'void {name}(void) {{')
     # ebp is a global register (g_ebp via alias) — see recomp_types.h. It must
@@ -264,6 +419,11 @@ def lift_function_linear(lifter, name, instructions, leaders, func_start,
     # function (tail-dispatch); without it, a jump past the entry we trimmed at
     # emits `goto L_<addr>` with no such label -- error C2094 at compile time.
     lifter._labels = leaders
+    # The arms of this function's switch tables. Without them lift32 has to tail-
+    # dispatch a computed jump, which leaves the function -- and the arm then
+    # returns without the prologue's frame, so ESP comes back short by the whole
+    # frame. With them the switch becomes a goto and the frame stays intact.
+    lifter._jump_targets = arms or set()
     for insn in instructions:
         if insn.address in leaders:
             lines.append(f'L_{insn.address:08X}:')
@@ -357,6 +517,7 @@ def main():
     print(f'[*]   Found {len(entries)} function entries', flush=True)
 
     md_probe = Cs(CS_ARCH_X86, CS_MODE_32)
+    md_probe.detail = True   # branches_past needs operand values
 
     # Merge manually-added functions from config/functions.json
     stem = os.path.splitext(os.path.basename(exe_path))[0].lower()
@@ -374,6 +535,15 @@ def main():
                 added += 1
         entries.sort()
         print(f'[*]   Added {added} manual entries (total: {len(entries)})', flush=True)
+
+    # The entries we are sure about: something CALLS them. Everything else came
+    # from a prologue-shaped byte pattern, a pointer in data, or the runtime,
+    # and may well be a block in the middle of a function. resolve_func_end
+    # uses this to decide whether a boundary is real.
+    global CALL_TARGETS, CODE_RANGE
+    CODE_RANGE = (code_start, code_end)
+    CALL_TARGETS = find_call_targets(code_data, code_start, code_end)
+    print(f'[*]   {len(CALL_TARGETS)} of them are direct call targets', flush=True)
 
     # Step 3: Disassembly + Lifting
     print(f'\n[*] Step 3: Disassembly + Code Generation...', flush=True)
@@ -406,24 +576,13 @@ def main():
             continue
 
         try:
-            instructions, leaders = linear_disassemble_function(
+            instructions, leaders, arms = linear_disassemble_function(
                 md, code_data, code_start, addr, func_end)
 
             if not instructions:
                 continue
 
-            trimmed = []
-            seen_ret = False
-            for insn in instructions:
-                if insn.mnemonic == 'int3':
-                    break
-                if seen_ret:
-                    if insn.address not in leaders:
-                        continue
-                    seen_ret = False
-                trimmed.append(insn)
-                if insn.is_ret:
-                    seen_ret = True
+            trimmed = [i for i in instructions if i.mnemonic != 'int3']
             if not trimmed:
                 continue
 
@@ -433,9 +592,10 @@ def main():
             # data) and for one landing on the int3 padding trimmed above.
             # Dropping it makes lift32 tail-dispatch the branch instead.
             leaders &= {i.address for i in trimmed}
+            arms &= leaders
 
             code = lift_function_linear(lifter, name, trimmed, leaders, addr,
-                                        fallthrough=next_real)
+                                        fallthrough=next_real, arms=arms)
             chunk_funcs.append((code, addr, name))
             all_entries.append((addr, name))
 
