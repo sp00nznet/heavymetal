@@ -30,7 +30,10 @@ file(GLOB RECOMP_GENERATED_SOURCES CONFIGURE_DEPENDS "src/recomp/gen/recomp_*.c"
 add_executable(fakk2
     src/game/main.c
     src/game/imports.c
+    src/game/callbacks.c
+    src/game/shims.c
     src/game/imports_gen.c
+    src/game/stdcall_argc.c
     src/recomp/image_loader.c
     ${RECOMP_GENERATED_SOURCES}
 )

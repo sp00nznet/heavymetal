@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Turn the runtime's "unresolved VA" complaints into function entries.
 
+Also picks up callback addresses (a WndProc, a thread entry) that have no lifted
+body -- same cause.
+
 A jump into the middle of what the raw scan thought was one function has no
 label to land on, so the lifter tail-dispatches it -- and at runtime there is
 no function at that VA to dispatch to. Every such VA is a function boundary the
@@ -30,7 +33,11 @@ def main():
     # Only VAs in the code range: an unresolved import sentinel or a garbage
     # pointer is not a missing function.
     lo, hi = 0x00401000, 0x004D4905
-    found = {int(m, 16) for m in re.findall(r'unresolved VA (0x[0-9A-Fa-f]{8})', open(log).read())}
+    text = open(log).read()
+    found = {int(m, 16) for m in re.findall(r'unresolved VA (0x[0-9A-Fa-f]{8})', text)}
+    # A callback address Windows was handed that has no lifted body is the same
+    # kind of miss: a function boundary the scan did not find.
+    found |= {int(m, 16) for m in re.findall(r'no lifted function at (0x[0-9A-Fa-f]{8})', text)}
     new = sorted(va for va in found if lo <= va < hi and va not in known and va not in have)
 
     for va in new:

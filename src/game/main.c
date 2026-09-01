@@ -13,6 +13,7 @@
 #include <windows.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "recomp_types.h"
 #include "recomp_funcs.h"
@@ -111,13 +112,7 @@ recomp_func_t recomp_lookup_manual(uint32_t va) { (void)va; return NULL; }
 
 /* recomp_lookup_import lives in imports.c. */
 
-/* Calls to code resolved at runtime (LoadLibrary/GetProcAddress -- FAKK2 does
- * this for opengl32). Nothing registered yet, so every such call is unresolved.
- * ponytail: the GL loader needs this before anything draws. */
-int recomp_native_call(uint32_t va) { (void)va; return 0; }
-void recomp_register_native(uint32_t addr, const char* name, int nargs) {
-    (void)addr; (void)name; (void)nargs;
-}
+/* recomp_native_call and recomp_register_native live in imports.c. */
 
 /* Only meaningful in a hybrid build, where a routed vtable slot holds a thunk
  * address instead of a function VA. This build is fully lifted -- no thunks. */
@@ -211,6 +206,12 @@ static LONG WINAPI veh_handler(EXCEPTION_POINTERS* ep) {
     if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION)
         return EXCEPTION_CONTINUE_SEARCH;
     fprintf(stderr, "\n=== access violation in sub_%08X ===\n", g_cur_func);
+    fprintf(stderr, "  faulting instruction at %p", ep->ExceptionRecord->ExceptionAddress);
+    if (ep->ExceptionRecord->NumberParameters >= 2)
+        fprintf(stderr, ", %s of 0x%p",
+                ep->ExceptionRecord->ExceptionInformation[0] ? "write" : "read",
+                (void*)ep->ExceptionRecord->ExceptionInformation[1]);
+    fprintf(stderr, "\n");
     fprintf(stderr, "  eax=%08X ecx=%08X edx=%08X ebx=%08X\n", g_eax, g_ecx, g_edx, g_ebx);
     fprintf(stderr, "  esp=%08X ebp=%08X esi=%08X edi=%08X\n", g_esp, g_ebp, g_esi, g_edi);
     fprintf(stderr, "  calls=%u depth=%u\n", g_total_calls, g_call_depth);
@@ -224,10 +225,26 @@ int main(int argc, char* argv[]) {
 
     if (!is_recomp_child()) return launcher_main();
 
+    setvbuf(stdout, NULL, _IONBF, 0);   /* the process can die inside lifted code */
+
     printf("=== Heavy Metal: FAKK2 - static recompilation ===\n");
     printf("[*] %u lifted functions\n", recomp_dispatch_count);
 
     AddVectoredExceptionHandler(1, veh_handler);
+
+    /* FAKK2_HEAPCHECK=<n>: HeapValidate every n-th lifted call, to pin heap
+     * corruption on the call that caused it rather than the malloc that trips
+     * over it later. Slow -- diagnostic only. */
+    g_trace_strings = GetEnvironmentVariableA("FAKK2_TRACE_STR", NULL, 0) > 0;
+
+    {
+        char hc[16];
+        if (GetEnvironmentVariableA("FAKK2_HEAPCHECK", hc, sizeof(hc))) {
+            g_heap_check_enabled = 1;
+            g_heap_check_every = (uint32_t)atoi(hc);
+            printf("[*] heap validation every %u calls\n", g_heap_check_every);
+        }
+    }
 
     if (!recomp_load_image(exe, FAKK_IMAGE_BASE)) {
         fprintf(stderr, "FATAL: could not map %s at 0x%08X\n", exe, FAKK_IMAGE_BASE);

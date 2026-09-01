@@ -42,10 +42,12 @@ fakk2.exe (2000, MSVC 6)
     |
     |  run_lift.py        PE analysis -> function discovery -> x86-to-C
     v
-src/recomp/gen/           3,885 functions, ~430K lines of C, 0 lift errors
+src/recomp/gen/           4,118 functions, ~430K lines of C, 0 lift errors
     +
 src/game/main.c           x86 machine state, image mapping, VA-reserving launcher
 src/game/imports.c        Win32 import bridge -- forwards to the REAL Win32 API
+src/game/callbacks.c      the real -> lifted boundary (WndProc, thread entries)
+src/game/shims.c          the handful of CRT functions the host does better
     |
     v
 build/bin/Release/fakk2.exe
@@ -90,23 +92,69 @@ The engine executable imports from 6 Win32 DLLs (195 unique functions) and dynam
 ## Project Status
 
 **Phase: Runtime bringup.** The recompiled binary runs the original MSVC 6 CRT
-startup and gets ~27,000 calls into the engine before faulting.
+startup, brings up the engine, creates its window with a working message loop,
+reads the registry, and opens `pak0.pk3` -- **1.44 million calls and a quarter of
+the lifted code** before it faults.
 
 | Phase | Status | Result |
 |-------|--------|--------|
 | **0** -- binary analysis, asset extraction | Complete | Unpacked MSVC 6 PE, no DRM; 194 imports, 866 KB of code |
-| **1** -- function discovery | Complete | **3,885 functions** (call graph + prologues + `push imm32` + vtable/data pointers + runtime-discovered splits) |
+| **1** -- function discovery | Complete | **4,118 functions** (call graph + prologues + `push imm32` + vtable/data pointers + runtime-discovered splits) |
 | **2** -- x86-to-C lift | Complete | **~430K lines of C, 0 lift errors** |
 | **3** -- compile and link | Complete | 0 errors, 32-bit host at base `0x70000000` |
-| **4** -- runtime bringup | **In progress** | Image maps at its real VAs, all **194 imports resolve and forward to the real Win32 API**, CRT startup runs, ~27K calls into engine init |
-| 5 -- engine init | Pending | Follow the fault past CRT/engine setup; a real->lifted trampoline for Win32 callbacks (`WndProc`) |
-| 6 -- renderer | Pending | The game loads OpenGL through `LoadLibrary`/`GetProcAddress`; that path needs `recomp_native_call` |
+| **4** -- runtime bringup | Complete | Image at its real VAs, **all 194 imports forwarded to the real Win32 API**, CRT startup runs |
+| **5** -- engine init | **In progress** | **1,443,616 calls, 1,039 of 4,118 functions executed (25%)**: window created, WndProc callbacks land in lifted code, message loop pumping, registry read, `fakk/pak0.pk3` open |
+| 6 -- renderer | Pending | The GL entry points already bridge (see below); nothing draws yet |
 | 7 -- assets, gameplay | Pending | PK3 filesystem, BSP (FAKK v12), TIKI models, Morpheus scripts, Ghost particles |
 
 The two game DLLs lift cleanly as well and are not yet linked in:
 `gamex86.dll` at **8,303 functions** / 650K lines, `cgamex86.dll` at **1,239
-functions** / 128K lines -- 13,427 functions and 1.2M lines of C across the
+functions** / 128K lines -- over 13,000 functions and 1.2M lines of C across the
 three binaries, all at 0 lift errors.
+
+### The three things that made it run
+
+**Imports are forwarded, not stubbed.** Each IAT slot is patched with a
+sentinel; the dispatcher maps the sentinel back to the real `kernel32` /
+`user32` / `gdi32` / `winmm` / `advapi32` / `ole32` function and moves the
+arguments from the simulated stack to the real one. Stdcall argument counts come
+out of the Windows SDK import libraries, which keep the decorated
+`_CreateFileA@28` symbol -- so no table is maintained by hand. The same trick
+covers everything the game resolves at runtime through `GetProcAddress`
+(11,503 signatures, opengl32 included), so the renderer's entry points are
+already callable.
+
+**Callbacks come back through a trampoline.** The window procedure the game
+registers is the address of its own code. We map the original image, so Windows
+calling it would run the 2000-vintage machine code -- which dies on its first
+`call [IAT]`. `src/game/callbacks.c` hands Windows a real function instead, one
+per lifted procedure, that moves the arguments onto the simulated stack and
+dispatches. Thread entry points work the same way.
+
+**A few CRT functions are host shims, not lifted** (`run_lift.py`'s `HOST_SHIM`).
+MSVC 6's allocator is its own small-block heap, and the lifted `_msize` reads a
+block header that is not there -- silently corrupting the host heap hundreds of
+calls before a later `malloc` trips over it. `malloc`/`free`/`realloc`/`_msize`/
+`operator new` go to the host CRT as a set. So do `sprintf`/`vsprintf`: on 32-bit
+x86 a `va_list` is just a pointer into the argument block, which is exactly what
+the simulated stack holds, so the hand-off is direct.
+
+### Bring-up tooling
+
+```bash
+py -3 tools/seed_data_fnptrs.py _extracted/fakk2.exe   # vtable / callback pointers
+py -3 tools/seed_unresolved.py run.log                 # boundaries the scan split wrong
+py -3 run_lift.py                                      # re-lift with the new entries
+```
+
+`seed_unresolved.py` closes the loop: run the binary, and every "unresolved VA"
+or unlifted callback in the log is a function boundary the static scan missed.
+Feed the log back in and re-lift until it converges -- that alone took coverage
+from 4.8% to 23%.
+
+Runtime switches, all optional: `FAKK2_TRACE_STR=1` logs the file names and
+window text the game passes to Win32 (this is how you find out *why* it stopped);
+`FAKK2_HEAPCHECK=<n>` validates the host heap.
 
 ### Building
 
@@ -116,11 +164,16 @@ cd heavymetal
 
 # Put your own fakk2.exe / gamex86.dll / cgamex86.dll in _extracted/
 py -3 run_lift.py                      # lift fakk2.exe   -> src/recomp/gen
-py -3 gen_imports.py                   # import table     -> src/game/imports_gen.c
+py -3 gen_imports.py                   # import tables    -> src/game/
 cmake -B build -A Win32                # 32-bit host, required
 cmake --build build --config Release
+```
 
-build/bin/Release/fakk2.exe _extracted/fakk2.exe
+Run it from a directory that has the game's `fakk/` folder beside it, and give it
+the original binary to map:
+
+```bash
+cd _extracted && ../build/bin/Release/fakk2.exe fakk2.exe
 ```
 
 The generated C is not committed -- it is a derivative of the original binary,

@@ -109,6 +109,42 @@ def find_entries(code_data, code_start, code_end):
     return sorted(call_targets | prologues | push_imm_targets)
 
 
+# CRT functions replaced with hand-written host shims (src/game/shims.c) rather
+# than lifted. MSVC 6's allocator is its small-block heap (__sbh_*), a linked
+# structure of page descriptors that the lift does not survive -- it faults in
+# __sbh_alloc_block once the game starts allocating in earnest. The host CRT
+# does the same job, and the whole family has to move together or a block
+# allocated by one allocator gets freed by the other.
+# run_lift emits no body for these; the dispatch table still points at them.
+HOST_SHIM = {
+    0x004C2090,  # malloc          -> host malloc
+    0x004C3A16,  # operator new    -> host malloc
+    0x004C377E,  # free            -> host free
+    0x004C4F20,  # realloc         -> host realloc
+    0x004C5058,  # _msize          -> host _msize. Lifted, it asks the CRT's own
+                 #   small-block heap for the size of a host block: it reads a
+                 #   header at [p-4] that is not there, or calls HeapSize on the
+                 #   wrong heap handle. Whatever it returns, the caller then
+                 #   sizes a copy from it -- which is where the host heap gets
+                 #   corrupted, hundreds of calls before malloc trips over it.
+
+    # The printf format engine (_output at 0x004C61AF, 1,131 lines of lifted
+    # state machine). It walks a format string with byte-level flag tricks that
+    # the lift does not reproduce faithfully, and it faults reading a character
+    # table as a pointer. The host CRT formats identically, and on 32-bit x86 a
+    # va_list IS a pointer into the argument block -- which is exactly what the
+    # simulated stack holds -- so the hand-off is direct.
+    0x004C20EE,  # sprintf         -> host vsprintf
+    0x004C2A6E,  # vsprintf        -> host vsprintf
+
+    0x004C87FC,  # _tzset -> no-op. The lifted version leaves the _tzname
+                 #   pointer at 0xFFFFFFFC and hands it to WideCharToMultiByte,
+                 #   which faults writing the converted name. Nothing in a game
+                 #   needs a local timezone; the CRT only wants it for
+                 #   localtime(), which at worst reports UTC now.
+}
+
+
 JUMP_TABLE = None  # set in main(): (image_bytes, image_base) for table reads
 
 
@@ -362,6 +398,12 @@ def main():
             continue
 
         name = f'sub_{addr:08X}'
+
+        if addr in HOST_SHIM:
+            chunk_funcs.append((f'/* {name}: hand-written host shim, see src/game/shims.c */',
+                                addr, name))
+            all_entries.append((addr, name))
+            continue
 
         try:
             instructions, leaders = linear_disassemble_function(
