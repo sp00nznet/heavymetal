@@ -45,3 +45,10 @@ __pycache__/
 
 # Dependencies
 vcpkg_installed/
+
+# Lifted code: derived from fakk2.exe, so it carries the original's licence.
+# Regenerate with run_lift.py from your own copy of the game.
+src/recomp/gen/
+src/recomp/gen_game/
+src/recomp/gen_cgame/
+config/functions_*.json

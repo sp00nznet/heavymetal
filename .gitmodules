@@ -1,0 +1,4 @@
+[submodule "tools/pcrecomp"]
+	path = tools/pcrecomp
+	url = https://github.com/sp00nznet/pcrecomp.git
+	branch = main
